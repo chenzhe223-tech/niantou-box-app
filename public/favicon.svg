@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="念头盒 NianBox">
+  <rect width="512" height="512" rx="112" fill="#2F6D5B" />
+  <g fill="none" stroke="#F6F2E9" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="118" y="186" width="276" height="196" rx="32" />
+    <path d="M118 254h276" />
+    <path d="M226 300h60" />
+  </g>
+</svg>
