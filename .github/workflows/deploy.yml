@@ -1,0 +1,96 @@
+# 念头盒 NianBox —— 构建、测试并发布到 GitHub Pages。
+#
+# 说明：
+# 1. 使用 GitHub 官方推荐的 Pages 发布方式（configure-pages + upload-pages-artifact + deploy-pages），
+#    不需要把任何令牌或密钥写进仓库。
+# 2. 类型检查 / 测试 / 构建任一环节失败，构建任务即失败，部署任务不会执行。
+# 3. BASE_PATH 由仓库名动态生成，因此部署到 https://<user>.github.io/<repo>/ 时
+#    JS、CSS、图标、Manifest 与 Service Worker 都能正确加载。
+# 4. VITE_OFFICIAL_SITE_URL 是官网（落地页）地址，构建时注入应用设置页的「打开官网首页」入口。
+#    默认指向念头盒官网；如官网换地址，改下面的 OFFICIAL_SITE_URL，或在仓库
+#    Settings → Secrets and variables → Actions → Variables 里建一个 OFFICIAL_SITE_URL 覆盖。
+
+name: 部署到 GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  # 允许在仓库页面上手动触发一次部署。
+  workflow_dispatch:
+
+# 只授予发布 Pages 所需的最小权限。
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 官网（落地页）地址；留空则应用内不显示「打开官网首页」入口（宁可不显示，也不放点不动的假链接）。
+env:
+  OFFICIAL_SITE_URL: ${{ vars.OFFICIAL_SITE_URL || 'https://chenzhe223-tech.github.io/niantou-box/' }}
+
+# 同一时间只跑一个 Pages 部署；排队中的部署不取消正在进行的发布。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建与测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm typecheck
+
+      - name: 运行自动化测试
+        run: pnpm test
+
+      - name: 构建生产版本（子路径 /<仓库名>/）
+        run: pnpm build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_OFFICIAL_SITE_URL: ${{ env.OFFICIAL_SITE_URL }}
+
+      - name: 校验官网回链是否已注入产物
+        run: |
+          if [ -n "$OFFICIAL_SITE_URL" ] && ! grep -rqsF "$OFFICIAL_SITE_URL" dist/assets; then
+            echo "::warning::构建产物里没有找到官网地址 $OFFICIAL_SITE_URL，应用内将不会显示「打开官网首页」入口。"
+          else
+            echo "官网回链检查通过：$OFFICIAL_SITE_URL"
+          fi
+
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: 发布
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
