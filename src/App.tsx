@@ -5,7 +5,7 @@
  * 刷新任意页面都不会 404。
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
 import { BrandMark } from './components/BrandMark';
@@ -137,6 +137,22 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
 function CaptureReceiver() {
   const handled = useRef(false);
   const { route, navigate } = useHashRoute();
+  const [captureState, setCaptureState] = useState<'idle' | 'saving' | 'error'>('idle');
+
+  const saveIncomingIdea = async (content: string) => {
+    setCaptureState('saving');
+    try {
+      await createIdea({ content });
+      // Clear the transfer payload from browser history only after the local save succeeds.
+      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/inbox');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      setCaptureState('idle');
+    } catch {
+      // Keep the payload in the hash and show a retry option; never claim it was saved.
+      handled.current = false;
+      setCaptureState('error');
+    }
+  };
 
   useEffect(() => {
     if (handled.current) return;
@@ -147,20 +163,51 @@ function CaptureReceiver() {
     try {
       content = decodeURIComponent(match[1]).trim();
     } catch {
+      setCaptureState('error');
       return;
     }
     if (!content) return;
 
     handled.current = true;
-    void createIdea({ content }).then(() => {
-      // Clear the transfer payload from browser history after a confirmed local save.
-      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/inbox');
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    }).catch(() => {
-      // Keep the payload in the hash so the user can retry rather than silently losing it.
-      handled.current = false;
-    });
+    void saveIncomingIdea(content);
   }, []);
+
+  if (captureState !== 'idle') {
+    return (
+      <div className="nb-app">
+        <main className="nb-app__main" role="status" aria-live="polite">
+          <section className="nb-page">
+            <div className="nb-hero">
+              <h1 className="nb-hero__title">
+                {captureState === 'saving' ? '正在收好这个念头…' : '这条念头还没保存成功'}
+              </h1>
+              <p className="nb-hero__sub">
+                {captureState === 'saving'
+                  ? '正在把官网输入的原文保存到当前设备的念头盒收件箱。'
+                  : '原文仍保留在本次跳转地址中，你可以重试保存。'}
+              </p>
+              {captureState === 'error' ? (
+                <Button onClick={() => {
+                  const match = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
+                  if (!match) return;
+                  try {
+                    const content = decodeURIComponent(match[1]).trim();
+                    if (!content) return;
+                    handled.current = true;
+                    void saveIncomingIdea(content);
+                  } catch {
+                    setCaptureState('error');
+                  }
+                }}>
+                  重试保存
+                </Button>
+              ) : null}
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return <Shell route={route} navigate={navigate} />;
 }
