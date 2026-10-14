@@ -5,7 +5,7 @@
  * 避免界面与数据层出现两套不一致的规则。
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAppData } from '../app/AppDataProvider';
 import { paths } from '../app/routes';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -16,6 +16,7 @@ import { IdeaCard } from '../components/IdeaCard';
 import { useToast } from '../components/Toast';
 import { useNow } from '../hooks/useNow';
 import { filterIdeas } from '../services/query';
+import { track } from '../services/analytics';
 import { setIdeaPinned, softDeleteIdea, toNianBoxError } from '../services/storage';
 import {
   IDEA_CATEGORIES,
@@ -66,6 +67,17 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
   }, [projects]);
 
   const hasFilters = keyword.trim() !== '' || category !== 'all' || status !== 'all' || pinnedOnly;
+
+  /**
+   * 记录「有人用了搜索」这一事实（用于判断搜索值不值得继续做），
+   * 但**永远不上报关键词本身**——关键词是用户的灵感，不是运营数据。
+   * 停顿 900ms 才算一次，避免边打字边刷事件。
+   */
+  useEffect(() => {
+    if (keyword.trim() === '') return;
+    const timer = setTimeout(() => track('search_used'), 900);
+    return () => clearTimeout(timer);
+  }, [keyword]);
 
   const resetFilters = () => {
     setKeyword('');
