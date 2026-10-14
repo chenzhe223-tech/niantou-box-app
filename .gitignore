@@ -29,3 +29,7 @@ coverage/
 
 # 用户自己的数据导出（切勿提交个人灵感备份）
 nianbox-backup-*.json
+
+# 运营数据接收端的本地状态与本地密钥（wrangler 用，切勿提交）
+.wrangler/
+.dev.vars
