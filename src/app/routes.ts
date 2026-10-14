@@ -12,7 +12,9 @@ export type Route =
   | { name: 'projects' }
   | { name: 'project'; id: string }
   | { name: 'trash' }
-  | { name: 'settings' };
+  | { name: 'settings' }
+  | { name: 'feedback' }
+  | { name: 'dev' };
 
 export const paths = {
   home: '#/',
@@ -22,6 +24,8 @@ export const paths = {
   project: (id: string) => `#/project/${encodeURIComponent(id)}`,
   trash: '#/trash',
   settings: '#/settings',
+  feedback: '#/feedback',
+  dev: '#/dev',
 } as const;
 
 export function parseHash(hash: string): Route {
@@ -45,6 +49,10 @@ export function parseHash(hash: string): Route {
       return { name: 'trash' };
     case 'settings':
       return { name: 'settings' };
+    case 'feedback':
+      return { name: 'feedback' };
+    case 'dev':
+      return { name: 'dev' };
     default:
       // 未知地址回到首页，避免出现白屏。
       return { name: 'home' };
@@ -67,5 +75,9 @@ export function routeToHash(route: Route): string {
       return paths.trash;
     case 'settings':
       return paths.settings;
+    case 'feedback':
+      return paths.feedback;
+    case 'dev':
+      return paths.dev;
   }
 }
