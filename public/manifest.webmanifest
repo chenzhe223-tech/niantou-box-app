@@ -9,8 +9,8 @@
   "id": "nianbox",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
-  "background_color": "#FAF7F2",
-  "theme_color": "#FAF7F2",
+  "background_color": "#F8F6F1",
+  "theme_color": "#7759DD",
   "categories": ["productivity", "utilities"],
   "icons": [
     {
