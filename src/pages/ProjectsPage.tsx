@@ -7,15 +7,33 @@ import { useMemo, useState } from 'react';
 import { useAppData } from '../app/AppDataProvider';
 import { formatRelative } from '../app/format';
 import { paths } from '../app/routes';
-import { Badge } from '../components/Badge';
+import { Badge, StatusBadge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/Toast';
 import { useNow } from '../hooks/useNow';
 import { toNianBoxError, upgradeIdeaToProject } from '../services/storage';
-import { displayTitle, productFormLabel, type Idea } from '../types/idea';
+import {
+  displayTitle,
+  productFormLabel,
+  type Idea,
+  type IdeaStatus,
+} from '../types/idea';
 import { progressLabel } from '../types/project';
+
+/**
+ * 候选念头的排序权重：越可能被推进成项目的越靠前。
+ * 已标记为「准备开发 / 开发中」的排最前，避免打乱用户已有的推进节奏。
+ */
+const UPGRADE_PRIORITY: Record<IdeaStatus, number> = {
+  ready: 0,
+  building: 1,
+  research: 2,
+  inbox: 3,
+  paused: 4,
+  done: 5,
+};
 
 export function ProjectsPage({ navigate }: { navigate: (hash: string) => void }) {
   const { ideas, projects } = useAppData();
@@ -34,18 +52,25 @@ export function ProjectsPage({ navigate }: { navigate: (hash: string) => void })
     return map;
   }, [ideas]);
 
-  /** 已经明确「准备开发 / 开发中」但还没升级为项目的念头。 */
-  const upgradable = useMemo(
-    () =>
-      ideas.filter(
+  /**
+   * 所有还没有升级成项目的念头都可以升级——不再要求先手动改成「准备开发」。
+   * 原因：用户记完念头会直接来项目库找它，如果这里只列「准备开发 / 开发中」，
+   * 刚记下的念头就会像「消失」了一样。升级时数据层会自动把状态推进到「准备开发」。
+   */
+  const upgradable = useMemo(() => {
+    const linkedIdeaIds = new Set(activeProjects.map((project) => project.ideaId));
+    return ideas
+      .filter(
         (idea) =>
           idea.deletedAt === null &&
           idea.projectId === null &&
-          (idea.status === 'ready' || idea.status === 'building') &&
-          !activeProjects.some((project) => project.ideaId === idea.id),
-      ),
-    [ideas, activeProjects],
-  );
+          !linkedIdeaIds.has(idea.id),
+      )
+      .sort((a, b) => {
+        const byStatus = UPGRADE_PRIORITY[a.status] - UPGRADE_PRIORITY[b.status];
+        return byStatus !== 0 ? byStatus : b.updatedAt - a.updatedAt;
+      });
+  }, [ideas, activeProjects]);
 
   const handleUpgrade = async (idea: Idea) => {
     setBusyId(idea.id);
@@ -73,7 +98,7 @@ export function ProjectsPage({ navigate }: { navigate: (hash: string) => void })
         <EmptyState
           icon="box"
           title="还没有创意项目。"
-          description="把一条念头标记为「准备开发」并升级为项目，就能在这里持续跟进它的进展。"
+          description="把你记下的念头升级为项目，就能在这里持续跟进它的进展。"
           action={
             <Button variant="primary" onClick={() => navigate(paths.inbox)}>
               去收件箱挑选念头
@@ -138,7 +163,7 @@ export function ProjectsPage({ navigate }: { navigate: (hash: string) => void })
             <h2 className="nb-section__title" id="nb-upgradable">
               可以升级的念头
             </h2>
-            <span className="nb-section__hint">已标记为「准备开发 / 开发中」</span>
+            <span className="nb-section__hint">任选一条一键升级，未标记的会自动设为「准备开发」</span>
           </div>
           <ul className="nb-list">
             {upgradable.map((idea) => (
@@ -153,6 +178,10 @@ export function ProjectsPage({ navigate }: { navigate: (hash: string) => void })
                 >
                   <span className="nb-idea__title">{displayTitle(idea)}</span>
                 </a>
+                <div className="nb-idea__meta">
+                  <StatusBadge status={idea.status} />
+                  <span>更新于 {formatRelative(idea.updatedAt, now)}</span>
+                </div>
                 <div className="nb-idea__foot">
                   <span className="nb-kv">升级后会保留到这条念头的链接</span>
                   <Button
