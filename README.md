@@ -245,7 +245,14 @@ https://<你的 GitHub 用户名>.github.io/niantou-box/
 
 其中用户名与仓库名必须填写你自己的真实值——工作流通过 `github.event.repository.name` 动态取仓库名，所以**无论仓库叫什么名字，Base 路径都会自动匹配**，不需要改代码。
 
-官网落地页目前已经部署在 `https://chenzhe223-tech.github.io/niantou-box/`（HTTP 200）。**应用（本体）目前尚未发布**（见第十五节）。应用地址取决于你选择的部署形态：
+官网落地页已经部署在 `https://chenzhe223-tech.github.io/niantou-box/`（HTTP 200）。
+
+**应用（本体）也已经上线并完成对接**：采用**方案 B（独立仓库 `chenzhe223-tech/niantou-box-app`）**，
+线上地址 `https://chenzhe223-tech.github.io/niantou-box-app/`（HTTP 200，Actions 构建 + 发布流程全绿）。
+官网的 `app-config.js` 已切换为 `appStatus: "live"`、`appUrl` 指向该地址，官网入口按钮文案为「打开念头盒 ↗」，
+点击后新标签页打开应用。线上实测结果见第十五节。
+
+两种形态对应的应用地址（供参考，本项目采用的是下面第二种）：
 
 - **方案 A（官网与应用同一个仓库、同一个站点）**：应用地址为 `https://chenzhe223-tech.github.io/niantou-box/app/`。
 - **方案 B（应用独立仓库、独立地址；本项目采用）**：应用地址为 `https://<你的用户名>.github.io/<应用仓库名>/`，例如 `https://chenzhe223-tech.github.io/niantou-box-app/`。
@@ -257,7 +264,7 @@ https://<你的 GitHub 用户名>.github.io/niantou-box/
 1. Actions 里构建任务的产物名（Artifact）与部署任务的输出 `page_url`；
 2. 仓库 **Settings → Pages** 顶部显示的 "Your site is live at …"。
 
-> 需要注意：**应用本体的部署尚未实际执行**（见第十五节）。上面的地址是 GitHub Pages 的固定格式，不是已验证的线上地址。
+> 上表里的方案 B 地址已经在线上验证过（HTTP 200、入口页与全部资源可取回，Actions 运行全绿）；方案 A 的 `/app/` 形态本项目没有实际部署。
 
 ---
 
@@ -416,15 +423,23 @@ nianbox-backup-YYYY-MM-DD.json
 | 方案 B 端到端预览自检（本地同时托管官网 + 独立地址应用） | `pnpm verify:site`（对着本机预览，应用配置取自 `app-config.方案B.js`） | 失败 0 项、待完成 0 项：官网 6 项 OK、对接行为 3 项 OK（2 处入口均指向应用地址、文案「打开念头盒 ↗」）、应用 10 项 OK（应用可达、确为念头盒、5 项资源 + manifest + `sw.js` 全 200、**回链已注入**） |
 | 同一站点「官网 + 应用」组装自检 | 本地静态服务器（严格 404）托管组装后的 `_site/` | 29 项检查全部通过、0 失败：官网 5 个文件 200、`appStatus=live` 生效、应用 `/app/` 入口及其 5 个资源、3 个 PWA 图标、`sw.js` 与 9 项预缓存全部 200；不存在的路径确实 404 |
 | 组装语义检查 | 复现工作流的 `rsync` 排除 + `cp -r dist/. _site/app/` | 通过：官网文件保留在根、应用在 `/app/`，而 `.github/`、`node_modules/`、应用的 `src/` 与 `package.json` 均**未**被复制进站点 |
-| 官网对接自检 | `pnpm verify:site` | 通过（0 失败）：官网 `script.js` 契约在 jsdom 中验证通过（2 处入口点、`href`/`target`/`rel`/文案全部符合），并报告线上状态为「官网尚未对接、应用尚未部署」 |
-| 线上状态核实（2026-10-14） | Node `fetch` 访问 `https://chenzhe223-tech.github.io/niantou-box/` | 官网首页 / `script.js` / `app-config.js` / `styles.css` 均 HTTP 200；`app-config.js` 的 `appStatus` 仍为 `coming-soon`、`appUrl` 为空；应用入口 `/app/` 返回 404（**应用尚未部署**） |
+| 官网对接自检（本地预览） | `pnpm verify:site` | 通过（0 失败）：官网 `script.js` 契约在 jsdom 中验证通过（2 处入口点、`href`/`target`/`rel`/文案全部符合） |
+| **线上发布后**：官网对接自检 | `SITE_URL=https://chenzhe223-tech.github.io/niantou-box/ APP_URL=https://chenzhe223-tech.github.io/niantou-box-app/ pnpm verify:site` | **失败 0 项、待完成 0 项**：官网 6 项 OK、对接行为 3 项 OK（2 处入口均指向应用地址、文案「打开念头盒 ↗」、状态「已对接」）、应用 10 项 OK（应用可达、确为念头盒、5 项资源 + manifest + `sw.js` 全 200、回链已注入） |
+| **线上发布后**：应用静态资源实测 | Node `fetch` 逐一取回 `https://chenzhe223-tech.github.io/niantou-box-app/` | 22 项全通过、0 失败：入口页（标题含「念头盒」）、5 项资源、PWA 清单 + 3 个图标、`sw.js` 与 9 项预缓存全部 200；不存在的路径确实 404；构建产物里带 `/niantou-box-app/` 前缀 |
+| **线上发布后**：应用真实功能冒烟测试 | 把**线上那份 JS 产物**放进 jsdom 执行，驱动一次真实操作（写下念头 → 提交 → 查库 → 切换页面） | 18 项全通过、0 失败：首屏与空状态正常、按钮是 `type=submit`、输入被 React 接收并写草稿、保存后出现成功提示、输入框清空、草稿被清理、记录出现在「最近的念头」、**IndexedDB 库 `nianbox` / 表 `ideas` 中确有该记录**、切到收件箱后记录仍在、运行期 0 未捕获异常 |
+| **线上发布后**：仓库与本地逐字节比对 | Node `fetch` 取回远端 59 个 blob，与本地交付包逐个 sha256 比对 | **59/59 逐字节一致，0 差异**（提交 `db8b64bb`） |
+| 线上状态核实（2026-10-14，对接后） | Node `fetch` 访问官网与应用 | 官网 `app-config.js` 为 `appStatus: "live"`、`appUrl` 指向应用地址、`appLabel` 为「打开念头盒 ↗」；应用站 HTTP 200；两个仓库最新 Actions 运行均 `success` |
 
 **没有执行**（受环境限制，不做任何声称）：
 
-- 真实浏览器渲染与视口测试（Playwright 等浏览器自动化工具在当前环境不可用）；
+- 真实浏览器渲染与视口测试（Playwright / Chromium 在当前环境不可用；上面的功能冒烟测试跑在 jsdom 上，
+  它能验证应用逻辑、数据读写与 DOM 结构，但**不能**替代真实浏览器的渲染、布局与滚动表现）；
 - iOS / Android / 鸿蒙真机验证；
-- **应用本体的 GitHub Actions 实际运行与 Pages 实际发布**（本机没有 GitHub 凭据，无法代你推送或改动远端文件；官网落地页目前是你在自己的仓库里部署的，应用部分还没发布）；
-- 应用在真实 GitHub Pages 上的端到端验证（应用尚未发布：方案 A 的 `/app/` 与方案 B 的独立应用地址目前都还是 404）。
+- Service Worker 的离线能力在真实浏览器中的表现（jsdom 不提供 Service Worker）；
+- 方案 A（同一站点 `/app/`）形态的实际部署（本项目采用方案 B，方案 A 只做了本地组装自检）。
+
+**已经执行**（应用本体部分）：GitHub Actions 的真实构建 + 测试 + Pages 发布（run 61 全绿）、方案 B 应用线上访问、
+官网 `app-config.js` 切换为 `live` 并完成对接，以及上表中「线上发布后」的 4 项线上实测。
 
 ---
 
