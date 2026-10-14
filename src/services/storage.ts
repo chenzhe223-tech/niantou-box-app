@@ -8,6 +8,7 @@
  */
 
 import {
+  STORE_FEEDBACK,
   STORE_IDEAS,
   STORE_PROJECTS,
   IndexedDbError,
@@ -40,6 +41,7 @@ import {
   isProjectProgress,
 } from '../types/project';
 import { matchesIdeaQuery, sortIdeas } from './query';
+import { track } from './analytics';
 
 export type StorageErrorCode =
   | 'EMPTY_CONTENT'
@@ -215,6 +217,8 @@ export async function createIdea(input: NewIdeaInput): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).add(idea));
   });
   emitChange();
+  // 埋点只记录「发生了一件事」，不携带任何用户写下的内容。
+  track('idea_created');
   return idea;
 }
 
@@ -302,6 +306,11 @@ export async function updateIdea(id: string, patch: IdeaPatch): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  track('idea_updated');
+  // 状态流转单独记一条：开发者据此知道用户卡在「待整理」还是走到了「准备开发」。
+  if (existing.status !== updated.status) {
+    track('idea_status_changed', { status: updated.status });
+  }
   return updated;
 }
 
@@ -314,6 +323,7 @@ export async function setIdeaPinned(id: string, pinned: boolean): Promise<Idea> 
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  track('idea_pinned');
   return updated;
 }
 
@@ -332,6 +342,7 @@ export async function softDeleteIdea(id: string): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  track('idea_deleted');
   return updated;
 }
 
@@ -342,6 +353,7 @@ export async function restoreIdea(id: string): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  track('idea_restored');
   return updated;
 }
 
@@ -362,6 +374,7 @@ export async function purgeIdea(id: string): Promise<void> {
     },
   );
   emitChange();
+  track('idea_purged');
 }
 
 export async function purgeDeletedIdeas(): Promise<number> {
@@ -457,6 +470,7 @@ export async function upgradeIdeaToProject(
     },
   );
   emitChange();
+  track('idea_upgraded');
   return { idea: updatedIdea, project };
 }
 
@@ -497,6 +511,7 @@ export async function updateProject(id: string, patch: ProjectPatch): Promise<Pr
     await promisifyRequest(tx.objectStore(STORE_PROJECTS).put(updated));
   });
   emitChange();
+  track('project_updated', { progress: updated.progress });
   return updated;
 }
 
@@ -588,11 +603,15 @@ export async function readMeta<T>(key: string): Promise<T | null> {
 
 /**
  * 清空全部本地数据（设置页的高危操作，需要用户二次确认）。
+ *
+ * 包括本机还没发出去的反馈草稿：用户要求「清空全部数据」时，
+ * 不能把带着他文字的记录留在设备上。
  */
 export async function clearAllData(): Promise<void> {
   await openDatabase();
   await clearStore(STORE_IDEAS);
   await clearStore(STORE_PROJECTS);
+  await clearStore(STORE_FEEDBACK);
   emitChange();
 }
 
