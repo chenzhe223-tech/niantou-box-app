@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-ssr/
+*.local
+
+# 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 编辑器 / 系统
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# 测试与覆盖率
+coverage/
+
+# 本地临时文件
+*.tmp
+.env
+.env.local
+
+# 用户自己的数据导出（切勿提交个人灵感备份）
+nianbox-backup-*.json
