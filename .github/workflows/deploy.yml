@@ -9,6 +9,12 @@
 # 4. VITE_OFFICIAL_SITE_URL 是官网（落地页）地址，构建时注入应用设置页的「打开官网首页」入口。
 #    默认指向念头盒官网；如官网换地址，改下面的 OFFICIAL_SITE_URL，或在仓库
 #    Settings → Secrets and variables → Actions → Variables 里建一个 OFFICIAL_SITE_URL 覆盖。
+# 5. 匿名统计 / 意见反馈的接收端由下面四个仓库变量控制，全部留空 = 不接入（应用不发出任何
+#    网络请求，功能完全可用）：
+#      TELEMETRY_ENDPOINT  接口地址（POST）
+#      TELEMETRY_KEY       只能写入、不能读取的令牌（读取凭据永远不进产物）
+#      DEV_DASHBOARD       设为 1 时设置页出现「开发者看板」入口
+#      VITE_APP_VERSION    自动使用本次构建的 commit SHA，用来区分用户实际运行的版本
 
 name: 部署到 GitHub Pages
 
@@ -28,6 +34,10 @@ permissions:
 # 官网（落地页）地址；留空则应用内不显示「打开官网首页」入口（宁可不显示，也不放点不动的假链接）。
 env:
   OFFICIAL_SITE_URL: ${{ vars.OFFICIAL_SITE_URL || 'https://chenzhe223-tech.github.io/niantou-box/' }}
+  # 留空即「不接入」：未注入 VITE_TELEMETRY_ENDPOINT 时应用不会发出任何网络请求。
+  TELEMETRY_ENDPOINT: ${{ vars.TELEMETRY_ENDPOINT }}
+  TELEMETRY_KEY: ${{ vars.TELEMETRY_KEY }}
+  DEV_DASHBOARD: ${{ vars.DEV_DASHBOARD }}
 
 # 同一时间只跑一个 Pages 部署；排队中的部署不取消正在进行的发布。
 concurrency:
@@ -66,6 +76,23 @@ jobs:
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
           VITE_OFFICIAL_SITE_URL: ${{ env.OFFICIAL_SITE_URL }}
+          VITE_APP_VERSION: ${{ github.sha }}
+          VITE_TELEMETRY_ENDPOINT: ${{ env.TELEMETRY_ENDPOINT }}
+          VITE_TELEMETRY_KEY: ${{ env.TELEMETRY_KEY }}
+          VITE_DEV_DASHBOARD: ${{ env.DEV_DASHBOARD }}
+
+      - name: 报告匿名统计接入状态
+        run: |
+          if [ -n "$TELEMETRY_ENDPOINT" ]; then
+            echo "匿名统计已接入：$TELEMETRY_ENDPOINT"
+            if grep -rqsF "$TELEMETRY_ENDPOINT" dist/assets; then
+              echo "接口地址已注入产物。"
+            else
+              echo "::warning::产物里没有找到统计接口地址 $TELEMETRY_ENDPOINT，请检查构建变量名。"
+            fi
+          else
+            echo "未配置 TELEMETRY_ENDPOINT：应用不发出任何网络请求，统计与反馈只留在本机（这是安全默认值）。"
+          fi
 
       - name: 校验官网回链是否已注入产物
         run: |
