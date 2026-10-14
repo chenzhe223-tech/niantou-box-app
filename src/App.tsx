@@ -7,6 +7,7 @@
 
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
+import { BrandMark } from './components/BrandMark';
 import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
 import { ToastProvider } from './components/Toast';
@@ -77,9 +78,7 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
       <header className={route.name === 'home' ? 'nb-app__top' : 'nb-app__top nb-app__top--bordered'}>
         <div className="nb-app__topinner">
           <a className="nb-brand" href={paths.home}>
-            <span className="nb-brand__mark" aria-hidden="true">
-              <Icon name="box" size={18} />
-            </span>
+            <BrandMark size={30} />
             <span className="nb-brand__name">
               念头盒
               <span className="nb-brand__en">NianBox</span>
