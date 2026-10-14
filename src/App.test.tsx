@@ -216,6 +216,39 @@ describe('创意项目', () => {
     expect(stored?.status).toBe('ready');
     expect(stored?.projectId).toBe(project.id);
   });
+
+  it('刚记下、还没标记状态的念头，也会直接出现在项目库里可以升级', async () => {
+    const idea = await createIdea({ content: '想做一个自动整理灵感的小工具' });
+    // 新念头默认是「待整理」，这正是用户最容易遇到的情况。
+    expect(idea.status).toBe('inbox');
+
+    const { user } = renderApp('#/projects');
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '创意项目库' }),
+    ).toBeInTheDocument();
+    // 项目库必须能告诉用户「有念头可以升级」，而不是显示 0 条。
+    expect(screen.getByText(/0 个进行中的项目，1 条念头可以升级/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: '可以升级的念头' }),
+    ).toBeInTheDocument();
+    // 待整理的念头也要列出来，否则用户会觉得念头「在项目里找不到」。
+    expect(screen.getByText('想做一个自动整理灵感的小工具')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '升级为项目' }));
+
+    const project = await waitFor(async () => {
+      const list = await listProjects();
+      expect(list).toHaveLength(1);
+      return list[0];
+    });
+    expect(project.ideaId).toBe(idea.id);
+
+    // 升级时自动把状态推进到「准备开发」。
+    const stored = await getIdea(idea.id);
+    expect(stored?.status).toBe('ready');
+    expect(stored?.projectId).toBe(project.id);
+  });
 });
 
 describe('设置与备份', () => {
