@@ -105,6 +105,18 @@
   --nb-paused-soft: var(--color-bg-tint);
   --nb-focus: var(--color-brand);
 
+  /* 品牌图形 / 反色底 / 半透明叠层：组件同样只引用第 2 层 */
+  --nb-star: var(--color-star);
+  --nb-white: var(--color-white);
+  --nb-danger-strong: var(--color-danger-hover);
+  --nb-overlay: var(--color-overlay);
+  --nb-overlay-invert: var(--color-overlay-invert);
+  --nb-accent-line: var(--color-accent-line);
+  --nb-danger-line: var(--color-danger-line);
+  /* 语义卡片底色：按「含义」命名，与状态色指向同一个品牌色 */
+  --nb-discover-soft: var(--color-yellow); /* 生活发现：暖阳黄 */
+  --nb-grow-soft: var(--color-mint); /* 成长与完成：嫩芽绿 */
+
   /* 圆角 */
   --nb-radius-xs: 8px;
   --nb-radius-sm: 10px;
@@ -309,8 +321,8 @@ svg {
   height: 30px;
   border-radius: 10px;
   /* 品牌标志：紫色圆角方底 + 品牌星形（内联 SVG），不依赖系统字体。 */
-  background: var(--color-brand);
-  color: var(--color-star);
+  background: var(--nb-accent);
+  color: var(--nb-star);
 }
 
 /* 星形图形：统一由 SVG 绘制，禁止用 ✳ / ✱ 等 Unicode 字符代替。 */
@@ -410,7 +422,7 @@ svg {
   padding: 0 4px;
   border-radius: var(--nb-radius-pill);
   background: var(--nb-accent);
-  color: var(--color-white);
+  color: var(--nb-white);
   font-size: 10px;
   line-height: 16px;
   text-align: center;
@@ -502,28 +514,28 @@ svg {
    一屏之内大面积色块优先「1 个主色 + 1～2 个辅助色」。 */
 .nb-card--discover {
   /* 生活发现 */
-  background: var(--color-yellow);
+  background: var(--nb-discover-soft);
   border-color: transparent;
   box-shadow: none;
 }
 
 .nb-card--note {
   /* 记录与思考 */
-  background: var(--color-brand-soft);
+  background: var(--nb-accent-soft);
   border-color: transparent;
   box-shadow: none;
 }
 
 .nb-card--grown {
   /* 成长与完成 */
-  background: var(--color-mint);
+  background: var(--nb-grow-soft);
   border-color: transparent;
   box-shadow: none;
 }
 
 .nb-card--warm {
   /* 温暖提示 */
-  background: var(--color-peach);
+  background: var(--nb-info-soft);
   border-color: transparent;
   box-shadow: none;
 }
@@ -579,7 +591,7 @@ svg {
 
 .nb-btn--primary {
   background: var(--nb-accent);
-  color: var(--color-white);
+  color: var(--nb-white);
   border-color: var(--nb-accent);
   box-shadow: var(--nb-shadow-brand);
 }
@@ -614,12 +626,12 @@ svg {
 .nb-btn--danger {
   background: var(--nb-danger);
   border-color: var(--nb-danger);
-  color: var(--color-white);
+  color: var(--nb-white);
 }
 
 .nb-btn--danger:hover:not(:disabled) {
-  background: var(--color-danger-hover);
-  border-color: var(--color-danger-hover);
+  background: var(--nb-danger-strong);
+  border-color: var(--nb-danger-strong);
 }
 
 .nb-btn--sm {
@@ -1066,7 +1078,7 @@ svg {
 }
 
 .nb-idea--pinned {
-  border-color: var(--color-accent-line);
+  border-color: var(--nb-accent-line);
 }
 
 .nb-idea__link {
@@ -1341,7 +1353,7 @@ svg {
 }
 
 .nb-danger-zone {
-  border-color: var(--color-danger-line);
+  border-color: var(--nb-danger-line);
 }
 
 .nb-trash__actions {
@@ -1494,7 +1506,7 @@ svg {
   justify-content: center;
   padding: var(--nb-4);
   padding-bottom: calc(var(--nb-4) + var(--nb-safe-bottom));
-  background: var(--color-overlay);
+  background: var(--nb-overlay);
   overflow-y: auto;
 }
 
@@ -1560,7 +1572,7 @@ svg {
   padding: var(--nb-3) var(--nb-3) var(--nb-3) var(--nb-4);
   border-radius: var(--nb-radius-sm);
   background: var(--nb-ink-strong);
-  color: var(--color-bg);
+  color: var(--nb-bg);
   font-size: var(--nb-text-sm);
   box-shadow: var(--nb-shadow-lg);
   pointer-events: auto;
@@ -1568,13 +1580,13 @@ svg {
 }
 
 .nb-toast--success {
-  background: var(--color-positive-strong);
-  color: var(--color-white);
+  background: var(--nb-done);
+  color: var(--nb-white);
 }
 
 .nb-toast--error {
-  background: var(--color-danger);
-  color: var(--color-white);
+  background: var(--nb-danger);
+  color: var(--nb-white);
 }
 
 .nb-toast__icon {
@@ -1607,7 +1619,7 @@ svg {
 
 .nb-toast__close:hover {
   opacity: 1;
-  background: var(--color-overlay-invert);
+  background: var(--nb-overlay-invert);
 }
 
 @keyframes nb-toast-in {
