@@ -84,7 +84,7 @@
 | --- | --- |
 | 界面 | React 19 + TypeScript（`strict`，开启 `noUnusedLocals` / `noUnusedParameters`） |
 | 构建 | Vite 8（rolldown） |
-| 样式 | 单一设计系统 `src/styles/global.css`（CSS 变量统一颜色、圆角、间距、字体、按钮高度） |
+| 样式 | 单一设计系统 `src/styles/global.css`：第 1 层 `--color-*` 是 NianBox 品牌色表（与官网同一套固定色值），第 2 层 `--nb-*` 是按用途命名的语义别名，组件只引用第 2 层；圆角、间距、字体、按钮高度同样由变量统一 |
 | 数据 | IndexedDB（浏览器原生），封装在 `src/services/` 中，界面与数据模型分离 |
 | 路由 | 哈希路由（`#/inbox` 这类地址），部署在静态托管的子路径下刷新不会 404 |
 | PWA | 手写 Manifest 与 Service Worker，无第三方 PWA 插件 |
@@ -177,7 +177,7 @@ pnpm verify         # 类型检查 + 全部测试 + 生产构建（提交前推�
 pnpm verify:site    # 官网对接自检：加载官网真实的 script.js 验证对接契约，并探测线上当前状态
 ```
 
-测试共 **77** 个用例，分为五个文件：
+测试共 **85** 个用例，分为六个文件：
 
 | 文件 | 用例数 | 覆盖内容 |
 | --- | ---: | --- |
@@ -186,10 +186,21 @@ pnpm verify:site    # 官网对接自检：加载官网真实的 script.js 验�
 | `src/App.test.tsx` | 14 | 页面级流程：首屏文案、真实写库、成功提示、空内容拦截、刷新后仍在、搜索筛选与无结果、删除二次确认与取消、详情原样显示、编辑持久化且保 ID/创建时间、不存在的念头、升级项目并保持关联、导出下载（文件名与 JSON 内容）、本地存储说明文案、IndexedDB 不可用时的错误状态与重试 |
 | `src/App.console.test.tsx` | 3 | 控制台干净度：主流程与空状态/无效路由下 `console.error`/`console.warn` 均为空，且没有未捕获错误或未处理的 Promise 拒绝 |
 | `src/App.site.test.tsx` | 5 | 官网对接：`getOfficialSiteUrl()` 只接受 http/https 绝对地址并补齐结尾斜杠，空串 / 纯空白 / 相对路径 / 裸域名 / `javascript:` 伪协议一律视为未配置；设置页在注入官网地址时渲染「关于念头盒」入口（校验 `href`、`target="_blank"`、`rel` 含 `noopener` 与 `noreferrer`），未注入或地址非法时整块不渲染 |
+| `src/test/brandTokens.test.ts` | 8 | 品牌设计系统守护：14 个规范固定色值逐字一致；第 2 层 `--nb-*` 别名不写死色值；组件层没有裸色值（hex / 数字 `rgb()` / `color-mix()`）；组件层不直接引用第 1 层 `--color-*`；所有 `var()` 都已定义且大括号配平；TS / TSX 源码里没有裸色值；品牌星形来自 SVG 而非 Unicode 星形字符；`BrandMark` / `favicon` / `App.tsx` 三者一致 |
 
 > 说明：测试在 jsdom 中运行，使用 `fake-indexeddb` 提供真实行为的 IndexedDB 实现，因此断言的是「确实写进了数据库」。测试用 worker 线程池而非子进程，在受限环境中同样可运行。
 
 > `pnpm verify:site` 不是单元测试：它会真实访问线上官网地址（默认 `https://chenzhe223-tech.github.io/niantou-box/`），把官网的 `script.js` 放进 jsdom 里跑，断言「切到 `live` 后」所有 `[data-app-link]` 都指向应用地址，并报告官网当前的对接状态与应用是否已经部署。未部署的应用地址只会被标记为「待完成」，不会判为失败（退出码仍为 0）；只有真实的对接错误才会让脚本失败。可以用 `SITE_URL=` / `APP_URL=` 覆盖默认地址。
+
+### 品牌设计系统守护测试
+
+`src/test/brandTokens.test.ts` 把《NianBox 品牌视觉系统统一规范》里的硬性规则变成可执行的断言，因此新增页面时如果写错了颜色，`pnpm test`（以及 CI）会直接失败：
+
+- **颜色只能写在一处**：所有色值必须出现在 `global.css` 的 `:root` 里，组件层只允许写 `var(--nb-*)`；组件层出现 `#` 开头的 hex、数字型 `rgb()` / `rgba()` 或 `color-mix()` 都会失败；
+- **品牌固定色值不许漂移**：`--color-brand` 等 14 个色值与规范逐字比对（例如 `--color-brand` 必须是 `#7759dd`）；
+- **品牌图形不许用字符代替**：`✳`(U+2733)、`✱`(U+2731)、`✦`(U+2726) 这类字符在 iOS Safari 与微信内置浏览器里会落到系统 Emoji 字体上（甚至显示成绿色「米字」），所以源码、`index.html`、`favicon.svg`、`manifest.webmanifest` 里都不允许出现，品牌星形只能走内联 SVG（`src/components/BrandMark.tsx`）。
+
+新增颜色时的正确做法是：先在 `:root` 第 1 层加一个 `--color-*`（或在品牌色表里挑最接近的一个），再在第 2 层加一个按用途命名的 `--nb-*`，组件里只写 `var(--nb-*)`。**不要**在组件里另造一个相近色。
 
 ---
 
@@ -413,7 +424,7 @@ nianbox-backup-YYYY-MM-DD.json
 | 检查项 | 命令 | 结果 |
 | --- | --- | --- |
 | 类型检查 | `pnpm typecheck` | 通过，0 错误 |
-| 自动化测试 | `pnpm test` | 5 个文件 / 77 个用例全部通过 |
+| 自动化测试 | `pnpm test` | 6 个文件 / 85 个用例全部通过（含品牌设计系统守护测试） |
 | 生产构建（根路径） | `pnpm build` | 成功（`dist/index.html` + 1 CSS + 1 JS） |
 | 生产构建（子路径） | `BASE_PATH=/niantou-box/ pnpm build` | 成功，产物资源路径均带 `/niantou-box/` 前缀 |
 | 子路径静态托管自检 | 本地静态服务器（不做 SPA 兜底）托管 `dist/` | 21 项全部 200/404 符合预期：入口页、JS、CSS、favicon、Manifest、3 个图标、Service Worker、SW 预缓存清单；不存在的路径确实返回 404 |
