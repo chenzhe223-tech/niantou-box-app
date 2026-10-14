@@ -144,7 +144,7 @@ function CaptureReceiver() {
     try {
       await createIdea({ content });
       // Clear the transfer payload from browser history only after the local save succeeds.
-      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/inbox');
+      window.history.replaceState(null, '', window.location.pathname + '#/inbox');
       window.dispatchEvent(new HashChangeEvent('hashchange'));
       setCaptureState('idle');
     } catch {
@@ -156,12 +156,12 @@ function CaptureReceiver() {
 
   useEffect(() => {
     if (handled.current) return;
-    const match = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
-    if (!match) return;
+    const incoming = new URLSearchParams(window.location.search).get('capture');
+    if (incoming === null) return;
 
     let content = '';
     try {
-      content = decodeURIComponent(match[1]).trim();
+      content = incoming.trim();
     } catch {
       setCaptureState('error');
       return;
@@ -188,10 +188,10 @@ function CaptureReceiver() {
               </p>
               {captureState === 'error' ? (
                 <Button onClick={() => {
-                  const match = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
-                  if (!match) return;
+                  const incoming = new URLSearchParams(window.location.search).get('capture');
+                  if (incoming === null) return;
                   try {
-                    const content = decodeURIComponent(match[1]).trim();
+                    const content = incoming.trim();
                     if (!content) return;
                     handled.current = true;
                     void saveIncomingIdea(content);
