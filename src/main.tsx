@@ -8,6 +8,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { initTelemetry } from './services/analytics';
+import { initFeedbackRetry } from './services/feedback';
 import './styles/global.css';
 
 const container = document.getElementById('root');
@@ -15,6 +17,15 @@ const container = document.getElementById('root');
 if (!container) {
   throw new Error('找不到挂载节点 #root，页面结构可能已损坏。');
 }
+
+/**
+ * 匿名使用统计与反馈补发。
+ *
+ * 两者都是「尽力而为」的后台动作：未配置后端时不会发出任何网络请求，
+ * 任何失败都不会冒泡到界面，也不会阻塞渲染。
+ */
+initTelemetry();
+initFeedbackRetry();
 
 createRoot(container).render(
   <StrictMode>
