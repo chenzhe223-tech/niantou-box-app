@@ -1,0 +1,160 @@
+# 念头盒 NianBox —— 一键部署「运营数据 + 意见反馈」接收端（Cloudflare Worker + D1）。
+#
+# 这个工作流解决的是：开发者（你自己）需要一个后端来收真实用户的事件与反馈。
+# 你不需要装 wrangler、不需要开终端，只要在这个页面上点一次 Run workflow。
+#
+# ── 跑之前只需要做好两件事（仓库 Settings → Secrets and variables → Actions）──
+#
+#   Secrets（加密，放只属于你的凭据）
+#     CLOUDFLARE_API_TOKEN   在 Cloudflare「我的个人资料 → API 令牌 → 创建令牌」里，
+#                            用模板「编辑 Cloudflare Workers」+ 追加 D1 编辑权限即可。
+#     NIANBOX_ADMIN_TOKEN    你自己随便定的长随机串（32 位以上），这就是你以后打开
+#                            运营看板时要输入的那把「只能读」的钥匙。它只会进 Worker，
+#                            永远不会被打印到日志里，也不会有第二个人知道。
+#
+#   Variables（可选，不填就用默认值）
+#     DEV_DASHBOARD          1 = 设置页出现「开发者」入口（只看得到本机数据）；0 = 关闭。
+#
+# 工作流本身会自动：建 D1 数据库 → 建表 → 上传 Worker → 写入两把令牌 → 打开 workers.dev
+# 子域 → /health 与真实 /ingest 自检 → 把接口地址与「只能写」的令牌写进仓库变量
+# （TELEMETRY_ENDPOINT / TELEMETRY_KEY）→ 触发一次 Pages 构建，把新接口打进应用产物。
+#
+# 保留旧写入令牌：如果仓库变量 TELEMETRY_KEY 已经有值，会原样复用，
+# 因此重复部署不会让已经发布出去的应用版本断线。
+#
+# 安全边界（写在流程里，不靠自觉）：
+#   1. 只会写入「只能写」的令牌到仓库变量；「只能读」的令牌只来自你自己的 secret，
+#      既不打印、不落产物、也不进缓存。
+#   2. 任何一步失败都会中断，不会留下一个半配置的仓库。
+
+name: 部署运营数据接收端（Cloudflare）
+
+on:
+  workflow_dispatch:
+    inputs:
+      account_id:
+        description: 'Cloudflare Account ID（可选；只有一个账号时留空自动推断）'
+        required: false
+        default: ''
+      workers_subdomain:
+        description: 'workers.dev 子域（可选；留空自动生成 nianbox-xxxxxx）'
+        required: false
+        default: ''
+      dev_dashboard:
+        description: '开发者入口开关（1 = 开启，0 = 关闭）'
+        required: true
+        default: '1'
+        type: choice
+        options:
+          - '1'
+          - '0'
+      dry_run:
+        description: '只检查令牌与账号，不做任何修改'
+        required: true
+        default: false
+        type: boolean
+
+# 需要 actions: write 来写仓库变量与触发 Pages 构建；不需要写代码权限。
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: telemetry-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 部署接收端
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 检查必需凭据是否就位
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.NIANBOX_ADMIN_TOKEN }}
+        run: |
+          missing=0
+          if [ -z "$CF_TOKEN" ]; then
+            echo "::error::缺少仓库 secret：CLOUDFLARE_API_TOKEN"
+            missing=1
+          fi
+          if [ -z "$ADMIN_TOKEN" ]; then
+            echo "::error::缺少仓库 secret：NIANBOX_ADMIN_TOKEN（你要自己定一串 32 位以上的随机字符）"
+            missing=1
+          elif [ "${#ADMIN_TOKEN}" -lt 24 ]; then
+            echo "::error::NIANBOX_ADMIN_TOKEN 太短（${#ADMIN_TOKEN} 位），请换一串 32 位以上的随机字符。"
+            missing=1
+          fi
+          if [ "$missing" != "0" ]; then
+            echo "在仓库 Settings → Secrets and variables → Actions 里补齐上面两项后重跑本工作流。"
+            exit 1
+          fi
+          echo "凭据检查通过（读取令牌长度 ${#ADMIN_TOKEN}）。"
+
+      - name: 部署 Worker + D1
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ inputs.account_id }}
+          NIANBOX_ADMIN_TOKEN: ${{ secrets.NIANBOX_ADMIN_TOKEN }}
+          # 已存在的写入令牌原样复用，避免已发布的应用版本断线。
+          NIANBOX_INGEST_KEY: ${{ vars.TELEMETRY_KEY }}
+          DRY: ${{ inputs.dry_run }}
+          SUB: ${{ inputs.workers_subdomain }}
+        run: |
+          args="--require-admin-token --emit-result=telemetry-result.json"
+          if [ "$DRY" = "true" ]; then args="$args --dry"; fi
+          if [ -n "$SUB" ]; then args="$args --sub=$SUB"; fi
+          node server/deploy-telemetry.mjs $args
+
+      - name: 写入仓库变量（TELEMETRY_ENDPOINT / TELEMETRY_KEY / DEV_DASHBOARD）
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DEV_DASHBOARD: ${{ inputs.dev_dashboard }}
+        run: |
+          set -u
+          endpoint=$(jq -r '.endpoint' telemetry-result.json)
+          ingest=$(jq -r '.ingestKey' telemetry-result.json)
+
+          set_var () {
+            name="$1"; value="$2"
+            # 先 PATCH（已存在），失败再 POST（新建）。
+            if gh api --method PATCH "repos/$REPO/actions/variables/$name" -f value="$value" >/dev/null 2>&1; then
+              echo "已更新仓库变量：$name"
+            elif gh api --method POST "repos/$REPO/actions/variables" -f name="$name" -f value="$value" >/dev/null 2>&1; then
+              echo "已新建仓库变量：$name"
+            else
+              echo "::warning::自动写入仓库变量 $name 失败（GITHUB_TOKEN 权限不足时会发生）。请手动填：$name = $value"
+              return 1
+            fi
+          }
+
+          set_var TELEMETRY_ENDPOINT "$endpoint" || true
+          set_var TELEMETRY_KEY "$ingest" || true
+          set_var DEV_DASHBOARD "$DEV_DASHBOARD" || true
+
+          echo "接口地址：$endpoint"
+          echo "（这一行是「只能写」的令牌，本来就会随应用源码一起发布到公开产物里，不是秘密）"
+          echo "写入令牌：$ingest"
+
+      - name: 删除中转文件（里面只有「只能写」的令牌，仍然不留）
+        if: always()
+        run: rm -f telemetry-result.json
+
+      - name: 触发一次 Pages 构建，把新接口打进应用产物
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          gh workflow run deploy.yml --ref "$REF"
+          echo "已触发「部署到 GitHub Pages」工作流；它跑完后新接口才会出现在线上应用里。"
