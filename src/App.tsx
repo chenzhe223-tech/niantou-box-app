@@ -12,6 +12,8 @@ import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
 import { ToastProvider } from './components/Toast';
 import { useHashRoute } from './hooks/useHashRoute';
+import { DeveloperPage } from './pages/DeveloperPage';
+import { FeedbackPage } from './pages/FeedbackPage';
 import { HomePage } from './pages/HomePage';
 import { IdeaDetailPage } from './pages/IdeaDetailPage';
 import { InboxPage } from './pages/InboxPage';
@@ -20,7 +22,11 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrashPage } from './pages/TrashPage';
 
-type TabName = 'home' | 'inbox' | 'projects' | 'trash' | 'settings';
+/**
+ * 底部导航的标签名。`none` 表示「当前页面不属于任何标签」
+ * （反馈页与开发者看板是从设置页进入的二级页面）。
+ */
+type TabName = 'home' | 'inbox' | 'projects' | 'trash' | 'settings' | 'none';
 
 const TABS: ReadonlyArray<{ name: TabName; label: string; icon: IconName; hash: string }> = [
   { name: 'home', label: '记念头', icon: 'plus', hash: paths.home },
@@ -46,6 +52,9 @@ function activeTab(route: Route): TabName {
       return 'trash';
     case 'settings':
       return 'settings';
+    case 'feedback':
+    case 'dev':
+      return 'none';
   }
 }
 
@@ -66,6 +75,10 @@ function RouteView({ route, navigate }: { route: Route; navigate: (hash: string)
       return <TrashPage navigate={navigate} />;
     case 'settings':
       return <SettingsPage navigate={navigate} />;
+    case 'feedback':
+      return <FeedbackPage navigate={navigate} />;
+    case 'dev':
+      return <DeveloperPage navigate={navigate} />;
   }
 }
 
