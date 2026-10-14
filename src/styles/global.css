@@ -1495,6 +1495,150 @@ svg {
   }
 }
 
+/* ------------------------------------------- 匿名统计 / 意见反馈（开发者） */
+
+/* 复选框：反馈页的「附带诊断信息」等选项。整行可点，触控目标 ≥44px。 */
+.nb-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nb-2);
+  min-height: var(--nb-control-h);
+  padding: var(--nb-3);
+  border: 1px solid var(--nb-line);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-surface-soft);
+  cursor: pointer;
+}
+
+.nb-check__input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--nb-accent);
+}
+
+.nb-check__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nb-1);
+  min-width: 0;
+}
+
+.nb-check__label {
+  color: var(--nb-ink-strong);
+  font-size: var(--nb-text-base);
+  font-weight: 550;
+}
+
+.nb-check__hint {
+  color: var(--nb-ink-muted);
+  font-size: var(--nb-text-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* 逐日活跃柱状图：只表示相对高低，不当作精确图表读。 */
+.nb-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: var(--nb-1);
+  margin-top: var(--nb-4);
+  padding: var(--nb-3);
+  border: 1px solid var(--nb-line);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-surface-soft);
+}
+
+.nb-bars__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--nb-1);
+  min-width: 0;
+}
+
+.nb-bars__count {
+  min-height: 14px;
+  color: var(--nb-ink-muted);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nb-bars__track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 72px;
+  border-radius: var(--nb-radius-xs);
+  background: var(--nb-accent-soft);
+  overflow: hidden;
+}
+
+.nb-bars__fill {
+  width: 100%;
+  min-height: 2px;
+  border-radius: var(--nb-radius-xs);
+  background: var(--nb-accent);
+}
+
+.nb-bars__day {
+  color: var(--nb-ink-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* 行内代码：构建变量名、SHA、设备标识等技术文本。 */
+.nb-code {
+  padding: 1px 5px;
+  border: 1px solid var(--nb-line);
+  border-radius: var(--nb-radius-xs);
+  background: var(--nb-surface);
+  color: var(--nb-ink-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--nb-text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* 「名称 —— 数值」两列清单：事件明细、统计汇总。 */
+.nb-kvlist {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--nb-line);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-surface);
+  overflow: hidden;
+}
+
+.nb-kvlist__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nb-3);
+  padding: var(--nb-2) var(--nb-3);
+  border-top: 1px solid var(--nb-line);
+  color: var(--nb-ink-soft);
+  font-size: var(--nb-text-sm);
+}
+
+.nb-kvlist__row:first-child {
+  border-top: 0;
+}
+
+.nb-kvlist__value {
+  flex: none;
+  color: var(--nb-ink-strong);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ------------------------------------------------------------------ 对话框 */
 
 .nb-dialog {
