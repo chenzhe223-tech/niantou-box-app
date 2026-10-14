@@ -5,6 +5,7 @@
  * 刷新任意页面都不会 404。
  */
 
+import { useEffect, useRef } from 'react';
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
 import { BrandMark } from './components/BrandMark';
@@ -21,6 +22,7 @@ import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrashPage } from './pages/TrashPage';
+import { createIdea } from './services/storage';
 
 /**
  * 底部导航的标签名。`none` 表示「当前页面不属于任何标签」
@@ -132,13 +134,42 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
   );
 }
 
-export function App() {
+function CaptureReceiver() {
+  const handled = useRef(false);
   const { route, navigate } = useHashRoute();
 
+  useEffect(() => {
+    if (handled.current) return;
+    const match = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
+    if (!match) return;
+
+    let content = '';
+    try {
+      content = decodeURIComponent(match[1]).trim();
+    } catch {
+      return;
+    }
+    if (!content) return;
+
+    handled.current = true;
+    void createIdea({ content }).then(() => {
+      // Clear the transfer payload from browser history after a confirmed local save.
+      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/inbox');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }).catch(() => {
+      // Keep the payload in the hash so the user can retry rather than silently losing it.
+      handled.current = false;
+    });
+  }, []);
+
+  return <Shell route={route} navigate={navigate} />;
+}
+
+export function App() {
   return (
     <ToastProvider>
       <AppDataProvider>
-        <Shell route={route} navigate={navigate} />
+        <CaptureReceiver />
       </AppDataProvider>
     </ToastProvider>
   );
