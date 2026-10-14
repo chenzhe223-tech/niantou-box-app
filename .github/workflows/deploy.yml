@@ -15,6 +15,10 @@
 #      TELEMETRY_KEY       只能写入、不能读取的令牌（读取凭据永远不进产物）
 #      DEV_DASHBOARD       设为 1 时设置页出现「开发者看板」入口
 #      VITE_APP_VERSION    自动使用本次构建的 commit SHA，用来区分用户实际运行的版本
+#
+#    注意：DEV_DASHBOARD 的默认值是 1（开发期方便你自己看本机使用情况）。
+#    正式对外发布前，把仓库变量 DEV_DASHBOARD 设为 0 即可让普通用户完全看不到开发者入口
+#    （该入口只会显示打开者自己设备上的数据，不会暴露其他任何人）。
 
 name: 部署到 GitHub Pages
 
@@ -37,7 +41,9 @@ env:
   # 留空即「不接入」：未注入 VITE_TELEMETRY_ENDPOINT 时应用不会发出任何网络请求。
   TELEMETRY_ENDPOINT: ${{ vars.TELEMETRY_ENDPOINT }}
   TELEMETRY_KEY: ${{ vars.TELEMETRY_KEY }}
-  DEV_DASHBOARD: ${{ vars.DEV_DASHBOARD }}
+  # 开发期默认开启「设置 → 开发者」入口，方便你随时查看本机使用情况与反馈；
+  # 正式发布前把仓库变量 DEV_DASHBOARD 设成 0 即可关闭。
+  DEV_DASHBOARD: ${{ vars.DEV_DASHBOARD || '1' }}
 
 # 同一时间只跑一个 Pages 部署；排队中的部署不取消正在进行的发布。
 concurrency:
@@ -83,6 +89,11 @@ jobs:
 
       - name: 报告匿名统计接入状态
         run: |
+          if [ "$DEV_DASHBOARD" = "1" ] || [ "$DEV_DASHBOARD" = "true" ] || [ "$DEV_DASHBOARD" = "on" ]; then
+            echo "开发者看板入口：已开启（设置页会出现「开发者」，只显示打开者自己设备上的数据）。"
+          else
+            echo "开发者看板入口：已关闭（普通用户看不到任何开发者入口）。"
+          fi
           if [ -n "$TELEMETRY_ENDPOINT" ]; then
             echo "匿名统计已接入：$TELEMETRY_ENDPOINT"
             if grep -rqsF "$TELEMETRY_ENDPOINT" dist/assets; then
