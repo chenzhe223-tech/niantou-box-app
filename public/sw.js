@@ -5,11 +5,16 @@
  * 1. 只在同源、GET 请求上工作，绝不缓存或改写任何数据请求；
  * 2. 导航请求使用「网络优先 + 缓存兜底」，保证在线时总能拿到最新版本，
  *    不会出现因为缓存了旧资源导致应用打不开的情况；
+ *    导航请求显式带 `cache: 'no-cache'`，向服务器做一次条件校验（通常是 304），
+ *    这样新版本一发布，用户下一次刷新就能看到，而不用等浏览器 HTTP 缓存自然过期；
  * 3. 静态资源使用 stale-while-revalidate，命中缓存即可离线打开界面；
  * 4. 所有缓存操作都做了容错，安装失败也不会阻塞应用启动。
+ *
+ * 版本策略：改动缓存逻辑或需要让所有用户强制换新时，把 CACHE_VERSION 加一。
+ * 旧缓存会在 activate 阶段被清理。
  */
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const CACHE_NAME = `nianbox-${CACHE_VERSION}`;
 
 /** 使用相对地址，保证部署在 /<repo>/ 这类子路径下依然正确。 */
@@ -81,7 +86,9 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       (async () => {
         try {
-          const response = await fetch(request);
+          // `cache: 'no-cache'` 会强制向服务器做一次条件请求（命中 ETag 时返回 304），
+          // 只丢掉浏览器的 HTTP 缓存、不影响离线能力，代价只有一次极小的校验。
+          const response = await fetch(request, { cache: 'no-cache' });
           const cache = await caches.open(CACHE_NAME);
           cache.put('./index.html', response.clone()).catch(() => undefined);
           return response;
