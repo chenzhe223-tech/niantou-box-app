@@ -413,7 +413,9 @@
         <form id="form">
           <div class="row">
             <div class="field">
-              <label for="endpoint">后端地址（写入 / 读取共用同一个服务）</label>
+              <label for="endpoint"
+                >后端地址（写入 / 读取共用同一个服务；粘 …/ingest 这种「接口地址」也行）</label
+              >
               <input
                 id="endpoint"
                 type="url"
@@ -606,6 +608,9 @@
 
         function normalizeBase(raw) {
           var trimmed = text(raw).trim().replace(/\/+$/, '');
+          // 允许直接把构建日志/仓库变量里的「接口地址」整条粘进来：
+          // https://host/ingest、https://host/report?days=30 → https://host
+          trimmed = trimmed.replace(/\/(ingest|report|health)([?#].*)?$/i, '').replace(/\/+$/, '');
           if (!trimmed) return '';
           try {
             var parsed = new URL(trimmed);
