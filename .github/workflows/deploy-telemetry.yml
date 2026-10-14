@@ -118,33 +118,10 @@ jobs:
         if: ${{ inputs.dry_run == false }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
           DEV_DASHBOARD: ${{ inputs.dev_dashboard }}
         run: |
-          set -u
-          endpoint=$(jq -r '.endpoint' telemetry-result.json)
-          ingest=$(jq -r '.ingestKey' telemetry-result.json)
-
-          set_var () {
-            name="$1"; value="$2"
-            # 先 PATCH（已存在），失败再 POST（新建）。
-            if gh api --method PATCH "repos/$REPO/actions/variables/$name" -f value="$value" >/dev/null 2>&1; then
-              echo "已更新仓库变量：$name"
-            elif gh api --method POST "repos/$REPO/actions/variables" -f name="$name" -f value="$value" >/dev/null 2>&1; then
-              echo "已新建仓库变量：$name"
-            else
-              echo "::warning::自动写入仓库变量 $name 失败（GITHUB_TOKEN 权限不足时会发生）。请手动填：$name = $value"
-              return 1
-            fi
-          }
-
-          set_var TELEMETRY_ENDPOINT "$endpoint" || true
-          set_var TELEMETRY_KEY "$ingest" || true
-          set_var DEV_DASHBOARD "$DEV_DASHBOARD" || true
-
-          echo "接口地址：$endpoint"
-          echo "（这一行是「只能写」的令牌，本来就会随应用源码一起发布到公开产物里，不是秘密）"
-          echo "写入令牌：$ingest"
+          # 纯 Node 实现（不需要 jq / curl），先 PATCH 已存在的变量，404 再 POST 新建。
+          node server/write-repo-vars.mjs telemetry-result.json
 
       - name: 删除中转文件（里面只有「只能写」的令牌，仍然不留）
         if: always()
