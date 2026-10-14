@@ -49,7 +49,7 @@
 
   /* 品牌紫底（反色区块）上的浅色 */
   --color-on-brand: #ffffff; /* 主标题 */
-  --color-on-brand-soft: #ddd3ff; /* 正文 / 浅紫装饰 */
+  --color-on-brand-soft: #f6f3ff; /* 紫底上的正文 / 浅紫装饰：4.51:1，达 WCAG AA */
 
   /* 功能状态色：不属于品牌色表，全站只此一份 */
   --color-danger: #a2453b; /* 删除等破坏性操作 */
@@ -57,7 +57,7 @@
   --color-danger-soft: #f8e9e6;
   --color-warn: #7a5a12; /* 进行中：暖阳黄系 */
   --color-info: #24221f; /* 值得研究：柔和桃系，文字用墨黑保证可读 */
-  --color-paused: #77736d; /* 暂缓：中性色 */
+  --color-paused: #65615b; /* 暂缓：中性色（浅色底 ≥5.3:1，达 WCAG AA） */
 
   /* RGB 三元组：供 rgba() 组合出与品牌色严格同源的半透明色。
      刻意不使用 color-mix()：部分微信内置浏览器内核版本不支持该函数，
