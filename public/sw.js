@@ -14,7 +14,7 @@
  * 旧缓存会在 activate 阶段被清理。
  */
 
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = `nianbox-${CACHE_VERSION}`;
 
 /** 使用相对地址，保证部署在 /<repo>/ 这类子路径下依然正确。 */
@@ -77,6 +77,18 @@ function isCacheableRequest(request) {
   return true;
 }
 
+/**
+ * 是否是「应用外壳」地址（目录根或 index.html）。
+ *
+ * 只有外壳地址才允许写进 index.html 缓存。否则用浏览器打开 admin.html
+ * （运营看板，同一域名下的独立页面）时，会把它的 HTML 覆盖到应用外壳缓存里，
+ * 之后离线打开应用就会拿到看板页面。
+ */
+function isAppShellUrl(url) {
+  const path = url.pathname;
+  return path.endsWith('/') || path.endsWith('/index.html');
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (!isCacheableRequest(request)) return;
@@ -89,8 +101,10 @@ self.addEventListener('fetch', (event) => {
           // `cache: 'no-cache'` 会强制向服务器做一次条件请求（命中 ETag 时返回 304），
           // 只丢掉浏览器的 HTTP 缓存、不影响离线能力，代价只有一次极小的校验。
           const response = await fetch(request, { cache: 'no-cache' });
-          const cache = await caches.open(CACHE_NAME);
-          cache.put('./index.html', response.clone()).catch(() => undefined);
+          if (isAppShellUrl(new URL(request.url))) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put('./index.html', response.clone()).catch(() => undefined);
+          }
           return response;
         } catch {
           const cache = await caches.open(CACHE_NAME);
