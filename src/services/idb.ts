@@ -4,11 +4,20 @@
  */
 
 export const DB_NAME = 'nianbox';
-export const DB_VERSION = 1;
+/**
+ * 数据库版本。
+ *
+ * v1 → v2：新增 feedback 表（用户主动提交的意见反馈）。
+ * upgradeSchema 里每个建表语句都带 contains 守卫，因此老用户升级时
+ * 已有表与数据不会被重建，只会补上缺的那张表。
+ */
+export const DB_VERSION = 2;
 
 export const STORE_IDEAS = 'ideas';
 export const STORE_PROJECTS = 'projects';
 export const STORE_META = 'meta';
+/** 用户主动提交的反馈（先落本机，再尝试上报）。 */
+export const STORE_FEEDBACK = 'feedback';
 
 export interface MetaRecord {
   key: string;
@@ -51,6 +60,11 @@ function upgradeSchema(db: IDBDatabase): void {
   }
   if (!db.objectStoreNames.contains(STORE_META)) {
     db.createObjectStore(STORE_META, { keyPath: 'key' });
+  }
+  if (!db.objectStoreNames.contains(STORE_FEEDBACK)) {
+    const feedback = db.createObjectStore(STORE_FEEDBACK, { keyPath: 'id' });
+    feedback.createIndex('by_createdAt', 'createdAt');
+    feedback.createIndex('by_uploadState', 'uploadState');
   }
 }
 
