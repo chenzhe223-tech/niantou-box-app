@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
 import { BrandMark } from './components/BrandMark';
+import { Button } from './components/Button';
 import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
 import { ToastProvider } from './components/Toast';
