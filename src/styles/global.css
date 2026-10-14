@@ -1,35 +1,109 @@
 /* ==========================================================================
    念头盒 NianBox · 全局设计系统
-   视觉关键词：温暖、安静、轻盈、理性、有创造感。
+   视觉关键词：灵动、有趣、简洁、温暖、轻盈、有创造力。
    所有页面共用同一套颜色、圆角、间距、字号与按钮高度规范。
+
+   颜色分两层，组件只允许引用第二层（--nb-* 语义别名）：
+     1) --color-*  NianBox 品牌色表，官网与应用完全一致，是唯一色值来源；
+     2) --nb-*     本应用对品牌色的语义映射，绑定"用途"而不是"色值"。
+   因此换肤、调整品牌色只需要改第 1 层，业务组件无需改动。
    ========================================================================== */
 
 :root {
-  /* 颜色：暖白背景 + 墨绿深灰文字 + 克制的柔和强调色 */
-  --nb-bg: #faf7f2;
-  --nb-bg-tint: #f3efe7;
-  --nb-surface: #ffffff;
-  --nb-surface-soft: #fbf9f5;
-  --nb-ink: #23302b;
-  --nb-ink-strong: #16201c;
-  --nb-ink-soft: #55645d;
-  --nb-ink-muted: #8b968f;
-  --nb-line: #e8e1d6;
-  --nb-line-strong: #d6ccbd;
-  --nb-accent: #2f6d5b;
-  --nb-accent-strong: #245349;
-  --nb-accent-soft: #e8f1ed;
-  --nb-danger: #a2453b;
-  --nb-danger-soft: #f8e9e6;
-  --nb-warn: #8a5a1b;
-  --nb-warn-soft: #fbf1dd;
-  --nb-info: #3d5570;
-  --nb-info-soft: #eaeef5;
-  --nb-done: #35674a;
-  --nb-done-soft: #e8f2ea;
-  --nb-paused: #6b6257;
-  --nb-paused-soft: #f0ebe3;
-  --nb-focus: #2f6d5b;
+  /* ---------------------------------------------------------------------
+     第 1 层：NianBox 品牌色（固定值，禁止在别处再写相近色）
+     --------------------------------------------------------------------- */
+
+  /* 基础色 */
+  --color-brand: #7759dd; /* 品牌灵感紫 */
+  --color-brand-hover: #6849cc; /* 紫色按钮悬停 / 交互态 */
+  --color-brand-soft: #e7ddff; /* 灵感淡紫背景 */
+  --color-bg: #f8f6f1; /* 暖纸白主背景 */
+  --color-surface: #fffefa; /* 卡片、输入框与浮层背景 */
+  --color-text: #24221f; /* 主要文字（墨黑） */
+  --color-text-muted: #77736d; /* 次级文字 */
+  --color-border: #dedbd3; /* 分隔线与组件边框 */
+
+  /* 创意辅助色 */
+  --color-mint: #dff1df; /* 嫩芽绿：成长、正向反馈 */
+  --color-yellow: #f6e7a8; /* 暖阳黄：生活发现、灵感 */
+  --color-peach: #f6d8c8; /* 柔和桃：温暖提示、特殊分类 */
+  --color-positive: #538251; /* 成功状态文字 */
+  --color-positive-soft: #e4f2df; /* 成功状态背景 */
+  --color-positive-strong: #40653e; /* 成功状态文字：浅绿底 5.7:1 / 其上白字 6.6:1 */
+
+  /* 品牌图形（品牌 Logo / 星形标志内部用色，见 components/BrandMark.tsx） */
+  --color-star: #fff9e9; /* 紫底上的星形白 */
+  --color-white: #ffffff;
+
+  /* 中性派生色：每个层级全站只允许出现一个值，避免"相近但不一致"的灰。
+     三级文字梯度均满足 WCAG AA（≥4.5:1 于 --color-bg / --color-surface 之上）：
+       --color-text        15.9:1
+       --color-text-soft    7.1:1
+       --color-text-muted   4.4:1（品牌规范给定的次级文字色） */
+  --color-text-soft: #57534d; /* 正文次级、说明文字 */
+  --color-border-soft: #e8e5dd; /* 比 border 更浅的分隔线 */
+  --color-border-strong: #cfcbc2; /* 输入框 / 次级按钮的边框 */
+  --color-bg-tint: #f3efe7; /* 暖纸白加深一档 */
+  --color-surface-soft: #fbf9f5; /* 卡片内的次级底 */
+
+  /* 品牌紫底（反色区块）上的浅色 */
+  --color-on-brand: #ffffff; /* 主标题 */
+  --color-on-brand-soft: #ddd3ff; /* 正文 / 浅紫装饰 */
+
+  /* 功能状态色：不属于品牌色表，全站只此一份 */
+  --color-danger: #a2453b; /* 删除等破坏性操作 */
+  --color-danger-hover: #8e372f;
+  --color-danger-soft: #f8e9e6;
+  --color-warn: #7a5a12; /* 进行中：暖阳黄系 */
+  --color-info: #24221f; /* 值得研究：柔和桃系，文字用墨黑保证可读 */
+  --color-paused: #77736d; /* 暂缓：中性色 */
+
+  /* RGB 三元组：供 rgba() 组合出与品牌色严格同源的半透明色。
+     刻意不使用 color-mix()：部分微信内置浏览器内核版本不支持该函数，
+     会让置顶栏与底部导航栏背景整体丢色（显示为全透明）。 */
+  --rgb-ink: 36, 34, 31; /* 墨黑：阴影、遮罩 */
+  --rgb-accent: 119, 89, 221; /* 品牌灵感紫 */
+  --rgb-bg: 248, 246, 241; /* 暖纸白 */
+  --rgb-surface: 255, 254, 250; /* 卡片白 */
+  --rgb-danger: 162, 69, 59; /* 危险色 */
+
+  /* 半透明叠层 */
+  --color-overlay: rgba(var(--rgb-ink), 0.42); /* 对话框遮罩 */
+  --color-overlay-invert: rgba(255, 255, 255, 0.12); /* 深色底上的高亮 */
+
+  /* 由品牌色派生的描边：等价于原 color-mix 计算结果，写成常量以保证旧内核表现一致 */
+  --color-accent-line: #c1b7d6; /* 品牌紫 28% + 边框色 72% */
+  --color-danger-line: #ccaea5; /* 危险色 30% + 边框色 70% */
+
+  /* ---------------------------------------------------------------------
+     第 2 层：应用语义别名（组件只引用这一层）
+     --------------------------------------------------------------------- */
+  --nb-bg: var(--color-bg);
+  --nb-bg-tint: var(--color-bg-tint);
+  --nb-surface: var(--color-surface);
+  --nb-surface-soft: var(--color-surface-soft);
+  --nb-ink: var(--color-text);
+  --nb-ink-strong: var(--color-text);
+  --nb-ink-soft: var(--color-text-soft);
+  --nb-ink-muted: var(--color-text-muted);
+  --nb-line: var(--color-border);
+  --nb-line-strong: var(--color-border-strong);
+  --nb-accent: var(--color-brand);
+  --nb-accent-strong: var(--color-brand-hover);
+  --nb-accent-soft: var(--color-brand-soft);
+  --nb-danger: var(--color-danger);
+  --nb-danger-soft: var(--color-danger-soft);
+  --nb-warn: var(--color-warn);
+  --nb-warn-soft: var(--color-yellow);
+  --nb-info: var(--color-info);
+  --nb-info-soft: var(--color-peach);
+  /* 已完成的绿字用 positive-strong：写在浅绿底上仍有 5.7:1，达到 WCAG AA */
+  --nb-done: var(--color-positive-strong);
+  --nb-done-soft: var(--color-positive-soft);
+  --nb-paused: var(--color-paused);
+  --nb-paused-soft: var(--color-bg-tint);
+  --nb-focus: var(--color-brand);
 
   /* 圆角 */
   --nb-radius-xs: 8px;
@@ -64,9 +138,11 @@
   --nb-tabbar-h: 62px;
   --nb-maxw: 720px;
 
-  --nb-shadow-sm: 0 1px 2px rgba(35, 48, 43, 0.05);
-  --nb-shadow: 0 8px 24px rgba(35, 48, 43, 0.07);
-  --nb-shadow-lg: 0 18px 48px rgba(35, 48, 43, 0.14);
+  --nb-shadow-sm: 0 1px 2px rgba(var(--rgb-ink), 0.05);
+  --nb-shadow: 0 8px 24px rgba(var(--rgb-ink), 0.07);
+  --nb-shadow-lg: 0 18px 48px rgba(var(--rgb-ink), 0.14);
+  /* 品牌紫按钮的投影：用品牌色本身，而不是另一种绿/蓝 */
+  --nb-shadow-brand: 0 6px 16px rgba(var(--rgb-accent), 0.22);
 
   --nb-font: system-ui, -apple-system, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC",
@@ -195,7 +271,7 @@ svg {
   top: 0;
   z-index: 20;
   padding: calc(var(--nb-safe-top) + var(--nb-3)) var(--nb-4) var(--nb-2);
-  background: color-mix(in srgb, var(--nb-bg) 88%, transparent);
+  background: rgba(var(--rgb-bg), 0.88);
   backdrop-filter: saturate(140%) blur(10px);
   border-bottom: 1px solid transparent;
 }
@@ -232,9 +308,18 @@ svg {
   width: 30px;
   height: 30px;
   border-radius: 10px;
-  background: var(--nb-accent-soft);
-  color: var(--nb-accent-strong);
-  border: 1px solid color-mix(in srgb, var(--nb-accent) 22%, transparent);
+  /* 品牌标志：紫色圆角方底 + 品牌星形（内联 SVG），不依赖系统字体。 */
+  background: var(--color-brand);
+  color: var(--color-star);
+}
+
+/* 星形图形：统一由 SVG 绘制，禁止用 ✳ / ✱ 等 Unicode 字符代替。 */
+.nb-brand__mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+  stroke: none;
 }
 
 .nb-brand__name {
@@ -273,7 +358,7 @@ svg {
   gap: var(--nb-1);
   padding: var(--nb-1) var(--nb-2)
     calc(var(--nb-safe-bottom) + var(--nb-1));
-  background: color-mix(in srgb, var(--nb-surface) 92%, transparent);
+  background: rgba(var(--rgb-surface), 0.92);
   backdrop-filter: saturate(140%) blur(12px);
   border-top: 1px solid var(--nb-line);
 }
@@ -325,7 +410,7 @@ svg {
   padding: 0 4px;
   border-radius: var(--nb-radius-pill);
   background: var(--nb-accent);
-  color: #fff;
+  color: var(--color-white);
   font-size: 10px;
   line-height: 16px;
   text-align: center;
@@ -413,6 +498,36 @@ svg {
   box-shadow: none;
 }
 
+/* 卡片语义色：按「含义」而不是「好看」配色，避免每张卡片一种颜色。
+   一屏之内大面积色块优先「1 个主色 + 1～2 个辅助色」。 */
+.nb-card--discover {
+  /* 生活发现 */
+  background: var(--color-yellow);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nb-card--note {
+  /* 记录与思考 */
+  background: var(--color-brand-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nb-card--grown {
+  /* 成长与完成 */
+  background: var(--color-mint);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nb-card--warm {
+  /* 温暖提示 */
+  background: var(--color-peach);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .nb-section {
   margin-top: var(--nb-6);
 }
@@ -464,9 +579,9 @@ svg {
 
 .nb-btn--primary {
   background: var(--nb-accent);
-  color: #fff;
+  color: var(--color-white);
   border-color: var(--nb-accent);
-  box-shadow: 0 6px 16px rgba(47, 109, 91, 0.22);
+  box-shadow: var(--nb-shadow-brand);
 }
 
 .nb-btn--primary:hover:not(:disabled) {
@@ -499,12 +614,12 @@ svg {
 .nb-btn--danger {
   background: var(--nb-danger);
   border-color: var(--nb-danger);
-  color: #fff;
+  color: var(--color-white);
 }
 
 .nb-btn--danger:hover:not(:disabled) {
-  background: #8e372f;
-  border-color: #8e372f;
+  background: var(--color-danger-hover);
+  border-color: var(--color-danger-hover);
 }
 
 .nb-btn--sm {
@@ -607,7 +722,7 @@ svg {
 .nb-select:focus {
   outline: none;
   border-color: var(--nb-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nb-accent) 18%, transparent);
+  box-shadow: 0 0 0 3px rgba(var(--rgb-accent), 0.18);
 }
 
 .nb-select {
@@ -657,7 +772,7 @@ svg {
 
 .nb-taginput:focus-within {
   border-color: var(--nb-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nb-accent) 18%, transparent);
+  box-shadow: 0 0 0 3px rgba(var(--rgb-accent), 0.18);
 }
 
 .nb-taginput__list {
@@ -882,7 +997,7 @@ svg {
 .nb-chip--active,
 .nb-chip--active:hover {
   background: var(--nb-accent-soft);
-  border-color: color-mix(in srgb, var(--nb-accent) 34%, transparent);
+  border-color: rgba(var(--rgb-accent), 0.34);
   color: var(--nb-accent-strong);
 }
 
@@ -951,7 +1066,7 @@ svg {
 }
 
 .nb-idea--pinned {
-  border-color: color-mix(in srgb, var(--nb-accent) 28%, var(--nb-line));
+  border-color: var(--color-accent-line);
 }
 
 .nb-idea__link {
@@ -1226,7 +1341,7 @@ svg {
 }
 
 .nb-danger-zone {
-  border-color: color-mix(in srgb, var(--nb-danger) 30%, var(--nb-line));
+  border-color: var(--color-danger-line);
 }
 
 .nb-trash__actions {
@@ -1379,7 +1494,7 @@ svg {
   justify-content: center;
   padding: var(--nb-4);
   padding-bottom: calc(var(--nb-4) + var(--nb-safe-bottom));
-  background: rgba(24, 33, 29, 0.42);
+  background: var(--color-overlay);
   overflow-y: auto;
 }
 
@@ -1445,7 +1560,7 @@ svg {
   padding: var(--nb-3) var(--nb-3) var(--nb-3) var(--nb-4);
   border-radius: var(--nb-radius-sm);
   background: var(--nb-ink-strong);
-  color: #f4f1ea;
+  color: var(--color-bg);
   font-size: var(--nb-text-sm);
   box-shadow: var(--nb-shadow-lg);
   pointer-events: auto;
@@ -1453,11 +1568,13 @@ svg {
 }
 
 .nb-toast--success {
-  background: #23554a;
+  background: var(--color-positive-strong);
+  color: var(--color-white);
 }
 
 .nb-toast--error {
-  background: #7f352c;
+  background: var(--color-danger);
+  color: var(--color-white);
 }
 
 .nb-toast__icon {
@@ -1490,7 +1607,7 @@ svg {
 
 .nb-toast__close:hover {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--color-overlay-invert);
 }
 
 @keyframes nb-toast-in {
