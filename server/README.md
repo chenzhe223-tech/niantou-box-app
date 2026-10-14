@@ -17,8 +17,24 @@
 > **需要你亲手做的一步**
 >
 > 部署后端需要你自己的 Cloudflare 账号（我不能替你在你的账号里创建资源）。
-> 下面的命令复制粘贴即可，全流程大约 10 分钟，免费额度足够个人使用
-> （D1 免费档：每天 500 万行读 / 10 万行写，Worker 每天 10 万次请求）。
+> 免费额度足够个人使用（D1 免费档：每天 500 万行读 / 10 万行写，Worker 每天 10 万次请求）。
+> 两种做法，任选其一：
+>
+> **方式 0 · 一键工作流（推荐，零命令行）**
+> 1. 在 <https://dash.cloudflare.com/profile/api-tokens> 用模板「编辑 Cloudflare Workers」
+>    建一枚令牌，并追加 **D1 编辑** 权限；
+> 2. 仓库 **Settings → Secrets and variables → Actions → Secrets** 里加两个：
+>    `CLOUDFLARE_API_TOKEN`（第 1 步那枚）、`NIANBOX_ADMIN_TOKEN`（你自己敲的 32 位以上随机串，
+>    以后打开运营看板就用它）；
+> 3. 仓库 **Actions → 部署运营数据接收端（Cloudflare）→ Run workflow**。
+>
+> 工作流（`.github/workflows/deploy-telemetry.yml`）会自动跑 `server/deploy-telemetry.mjs`：
+> 建 D1 → 建表 → 上传 Worker → 写两把令牌 → 开 workers.dev 子域 → `/health` 与真实
+> `/ingest` 自检 → 写入仓库变量 → 触发一次 Pages 重建。约 2 分钟，之后按第四节看数据即可。
+> 日志里**不会出现你的读取令牌**（CI 模式下脚本只回传「只能写」的那一枚）。
+>
+> **方式 1 · 命令行（等价，第一节往下照着做）**
+> 下面的命令复制粘贴即可，全流程大约 10 分钟。
 > 如果你更希望我来执行，把 Cloudflare 的 **Account ID** 和一枚
 > **Workers + D1 权限的 API Token** 给我即可（用完请随时在 Cloudflare 后台吊销）。
 
