@@ -156,7 +156,17 @@ function CaptureReceiver() {
 
   useEffect(() => {
     if (handled.current) return;
-    const incoming = new URLSearchParams(window.location.search).get('capture');
+    const queryPayload = new URLSearchParams(window.location.search).get('capture');
+    const hashMatch = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
+    let incoming: string | null = queryPayload;
+    if (incoming === null && hashMatch) {
+      try {
+        incoming = decodeURIComponent(hashMatch[1]);
+      } catch {
+        setCaptureState('error');
+        return;
+      }
+    }
     if (incoming === null) return;
 
     let content = '';
@@ -188,7 +198,17 @@ function CaptureReceiver() {
               </p>
               {captureState === 'error' ? (
                 <Button onClick={() => {
-                  const incoming = new URLSearchParams(window.location.search).get('capture');
+                  const queryPayload = new URLSearchParams(window.location.search).get('capture');
+                  const hashMatch = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
+                  let incoming: string | null = queryPayload;
+                  if (incoming === null && hashMatch) {
+                    try {
+                      incoming = decodeURIComponent(hashMatch[1]);
+                    } catch {
+                      setCaptureState('error');
+                      return;
+                    }
+                  }
                   if (incoming === null) return;
                   try {
                     const content = incoming.trim();
