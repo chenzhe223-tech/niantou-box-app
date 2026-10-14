@@ -50,6 +50,8 @@ export interface TextFieldProps {
   autoComplete?: string;
   id?: string;
   disabled?: boolean;
+  maxLength?: number;
+  autoFocus?: boolean;
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
 }
 
@@ -66,6 +68,8 @@ export function TextField({
   autoComplete,
   id,
   disabled,
+  maxLength,
+  autoFocus,
   onKeyDown,
 }: TextFieldProps) {
   const generatedId = useId();
@@ -81,6 +85,8 @@ export function TextField({
         inputMode={inputMode}
         autoComplete={autoComplete}
         disabled={disabled}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
         onKeyDown={onKeyDown}
         onChange={(event) => onChange(event.target.value)}
       />
