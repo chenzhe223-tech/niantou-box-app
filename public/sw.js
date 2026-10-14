@@ -9,7 +9,7 @@
  * 4. 所有缓存操作都做了容错，安装失败也不会阻塞应用启动。
  */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `nianbox-${CACHE_VERSION}`;
 
 /** 使用相对地址，保证部署在 /<repo>/ 这类子路径下依然正确。 */
