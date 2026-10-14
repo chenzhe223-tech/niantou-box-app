@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- 运营看板不参与搜索收录：只有拿着读取令牌的人才能看到数据。 -->
+    <meta name="robots" content="noindex, nofollow" />
+    <title>念头盒 NianBox · 运营看板</title>
+    <style>
+      /*
+       * 独立运营看板（不随应用一起打包，因此这里自带一份品牌变量）。
+       * 色值与《NianBox 品牌视觉系统统一规范》完全一致，页面样式只引用
+       * 下面这一层的语义别名（--nb-*），不在别处再写死颜色。
+       */
+      :root {
+        --color-brand: #7759dd;
+        --color-brand-hover: #6849cc;
+        --color-brand-soft: #e7ddff;
+        --color-bg: #f8f6f1;
+        --color-surface: #fffefa;
+        --color-text: #24221f;
+        --color-text-muted: #77736d;
+        --color-border: #dedbd3;
+        --color-mint: #dff1df;
+        --color-yellow: #f6e7a8;
+        --color-peach: #f6d8c8;
+        --color-positive: #538251;
+        --color-positive-soft: #e4f2df;
+        --color-star: #fff9e9;
+
+        --nb-brand: var(--color-brand);
+        --nb-brand-hover: var(--color-brand-hover);
+        --nb-brand-soft: var(--color-brand-soft);
+        --nb-bg: var(--color-bg);
+        --nb-surface: var(--color-surface);
+        --nb-text: var(--color-text);
+        --nb-text-muted: var(--color-text-muted);
+        --nb-border: var(--color-border);
+        --nb-star: var(--color-star);
+        --nb-mint: var(--color-mint);
+        --nb-yellow: var(--color-yellow);
+        --nb-peach: var(--color-peach);
+        --nb-positive: var(--color-positive);
+        --nb-positive-soft: var(--color-positive-soft);
+
+        --nb-radius-lg: 20px;
+        --nb-radius: 14px;
+        --nb-radius-sm: 10px;
+        --nb-shadow: 0 10px 30px rgba(36, 34, 31, 0.06);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--nb-bg);
+        color: var(--nb-text);
+        font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+        font-size: 15px;
+        line-height: 1.65;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      .wrap {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px 16px 64px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 4px;
+      }
+
+      .brand__name {
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+
+      .brand__en {
+        color: var(--nb-text-muted);
+        font-size: 12px;
+        font-weight: 600;
+        margin-left: 6px;
+        letter-spacing: 0.06em;
+      }
+
+      h1 {
+        font-size: 26px;
+        line-height: 1.3;
+        margin: 10px 0 4px;
+      }
+
+      .lead {
+        color: var(--nb-text-muted);
+        margin: 0 0 20px;
+        max-width: 60ch;
+      }
+
+      h2 {
+        font-size: 17px;
+        margin: 0;
+      }
+
+      .card {
+        background: var(--nb-surface);
+        border: 1px solid var(--nb-border);
+        border-radius: var(--nb-radius-lg);
+        padding: 18px;
+        margin-bottom: 16px;
+        box-shadow: var(--nb-shadow);
+      }
+
+      .card--soft {
+        background: var(--nb-brand-soft);
+        border-color: var(--nb-brand-soft);
+        box-shadow: none;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1 1 240px;
+        min-width: 0;
+      }
+
+      .field--narrow {
+        flex: 0 1 140px;
+      }
+
+      label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--nb-text-muted);
+      }
+
+      input,
+      select,
+      textarea {
+        font: inherit;
+        color: var(--nb-text);
+        background: var(--nb-surface);
+        border: 1px solid var(--nb-border);
+        border-radius: var(--nb-radius-sm);
+        padding: 10px 12px;
+        width: 100%;
+        min-height: 42px;
+      }
+
+      input:focus-visible,
+      select:focus-visible,
+      button:focus-visible {
+        outline: 2px solid var(--nb-brand);
+        outline-offset: 1px;
+      }
+
+      .btn {
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        border-radius: var(--nb-radius-sm);
+        border: 1px solid transparent;
+        min-height: 42px;
+        padding: 0 18px;
+        background: var(--nb-brand);
+        color: var(--nb-surface);
+      }
+
+      .btn:hover {
+        background: var(--nb-brand-hover);
+      }
+
+      .btn--ghost {
+        background: transparent;
+        color: var(--nb-text);
+        border-color: var(--nb-border);
+      }
+
+      .btn--ghost:hover {
+        background: var(--nb-bg);
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: progress;
+      }
+
+      .hint {
+        color: var(--nb-text-muted);
+        font-size: 13px;
+        margin: 10px 0 0;
+      }
+
+      .msg {
+        border-radius: var(--nb-radius);
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        font-size: 14px;
+      }
+
+      .msg--ok {
+        background: var(--nb-positive-soft);
+        color: var(--nb-positive);
+      }
+
+      .msg--warn {
+        background: var(--nb-yellow);
+        color: var(--nb-text);
+      }
+
+      .msg--error {
+        background: var(--nb-peach);
+        color: var(--nb-text);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        gap: 12px;
+      }
+
+      .stat {
+        background: var(--nb-bg);
+        border-radius: var(--nb-radius);
+        padding: 12px 14px;
+      }
+
+      .stat__value {
+        display: block;
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+
+      .stat__label {
+        color: var(--nb-text-muted);
+        font-size: 12px;
+      }
+
+      .bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        height: 120px;
+        margin-top: 6px;
+      }
+
+      .bars__item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        height: 100%;
+        min-width: 0;
+      }
+
+      .bars__fill {
+        width: 100%;
+        min-height: 3px;
+        border-radius: 6px 6px 2px 2px;
+        background: var(--nb-brand);
+      }
+
+      .bars__fill--empty {
+        background: var(--nb-border);
+      }
+
+      .bars__day {
+        font-size: 10px;
+        color: var(--nb-text-muted);
+        margin-top: 6px;
+        white-space: nowrap;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 8px 6px;
+        border-bottom: 1px solid var(--nb-border);
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--nb-text-muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      td.num,
+      th.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .tag {
+        display: inline-block;
+        font-size: 12px;
+        border-radius: 999px;
+        padding: 1px 10px;
+        background: var(--nb-bg);
+        border: 1px solid var(--nb-border);
+        margin-right: 6px;
+      }
+
+      .fb {
+        border-left: 4px solid var(--nb-brand-soft);
+        padding: 4px 0 4px 12px;
+        margin-bottom: 14px;
+      }
+
+      .fb__meta {
+        color: var(--nb-text-muted);
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
+
+      .fb__msg {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        background: var(--nb-bg);
+        border-radius: 6px;
+        padding: 1px 6px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      footer {
+        color: var(--nb-text-muted);
+        font-size: 12px;
+        margin-top: 24px;
+      }
+
+      @media (max-width: 520px) {
+        h1 {
+          font-size: 22px;
+        }
+
+        .wrap {
+          padding: 16px 12px 48px;
+        }
+
+        .card {
+          padding: 14px;
+        }
+
+        .btn {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <!-- 品牌标志使用内联 SVG：不依赖系统字体，微信 / iOS / Android 上表现一致。 -->
+        <svg width="28" height="28" viewBox="0 0 96 96" role="img" aria-label="念头盒">
+          <rect width="96" height="96" rx="27" fill="var(--nb-brand)" />
+          <g transform="translate(48 48) scale(0.72) translate(-48 -48)">
+            <path
+              d="M48 5 57 35 86 23 64 48 86 73 57 61 48 91 39 61 10 73 32 48 10 23 39 35Z"
+              fill="var(--nb-star)"
+            />
+          </g>
+        </svg>
+        <span class="brand__name">
+          念头盒<span class="brand__en">NianBox</span>
+        </span>
+      </div>
+
+      <h1>运营看板</h1>
+      <p class="lead">
+        只有拿着「读取令牌」的人才能查到数据。应用里带的是<strong>只能写入</strong>的令牌，
+        所以别人拿到应用网址也读不到任何运营数据。
+      </p>
+
+      <div id="notice" class="msg msg--warn">
+        这个页面不会自动读取任何数据。填入你自建后端的地址与读取令牌后，才会发起一次请求。
+        <br />
+        令牌只保存在这个浏览器标签页的内存 / 会话存储里，关闭标签页即失效，也不会写进任何文件。
+      </div>
+
+      <div class="card">
+        <form id="form">
+          <div class="row">
+            <div class="field">
+              <label for="endpoint">后端地址（写入 / 读取共用同一个服务）</label>
+              <input
+                id="endpoint"
+                type="url"
+                inputmode="url"
+                placeholder="https://nianbox-telemetry.example.workers.dev"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+            </div>
+            <div class="field">
+              <label for="token">读取令牌</label>
+              <input
+                id="token"
+                type="password"
+                placeholder="只有你自己知道，不要发给任何人"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+            </div>
+            <div class="field field--narrow">
+              <label for="days">统计范围</label>
+              <select id="days">
+                <option value="7">最近 7 天</option>
+                <option value="30" selected>最近 30 天</option>
+                <option value="90">最近 90 天</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 14px">
+            <button class="btn" type="submit" id="load">读取运营数据</button>
+            <button class="btn btn--ghost" type="button" id="export" disabled>导出 JSON</button>
+            <button class="btn btn--ghost" type="button" id="forget">清除本页令牌</button>
+          </div>
+        </form>
+        <p class="hint">
+          接口约定：<code>GET {地址}/report?days=30</code>，请求头
+          <code>Authorization: Bearer &lt;读取令牌&gt;</code>。返回结构见交付文档《运营数据与用户反馈-接入指南》。
+        </p>
+      </div>
+
+      <div id="status" class="msg hidden" role="status" aria-live="polite"></div>
+
+      <section id="results" class="hidden">
+        <div class="card card--soft">
+          <h2>概况</h2>
+          <p class="hint" id="range" style="margin-top: 4px"></p>
+          <div class="stats" id="stats"></div>
+        </div>
+
+        <div class="card">
+          <h2>每日活跃</h2>
+          <div class="bars" id="bars" role="img" aria-label="每日事件数"></div>
+        </div>
+
+        <div class="card">
+          <h2>功能使用分布</h2>
+          <p class="hint" style="margin-top: 4px">事件次数与涉及的设备数，按次数降序。</p>
+          <table>
+            <thead>
+              <tr>
+                <th>事件</th>
+                <th class="num">次数</th>
+                <th class="num">设备数</th>
+              </tr>
+            </thead>
+            <tbody id="events"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h2>平台与版本</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>平台</th>
+                <th class="num">设备数</th>
+              </tr>
+            </thead>
+            <tbody id="platforms"></tbody>
+          </table>
+          <p class="hint">版本分布用来判断「用户实际在跑哪一版」，避免拿旧版本的问题当新 bug 修。</p>
+          <table>
+            <thead>
+              <tr>
+                <th>版本</th>
+                <th class="num">设备数</th>
+              </tr>
+            </thead>
+            <tbody id="versions"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h2>用户反馈</h2>
+          <p class="hint" style="margin-top: 4px">
+            反馈内容由用户亲手提交；除非用户主动勾选，否则不会附带任何诊断信息。
+          </p>
+          <div id="feedback"></div>
+        </div>
+      </section>
+
+      <footer>
+        运营看板 · 念头盒 NianBox。这一页不会被搜索引擎收录，也不属于应用产物的一部分。
+      </footer>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var TOKEN_KEY = 'nb.admin.token';
+        var STORE = (function () {
+          try {
+            return window.sessionStorage;
+          } catch (error) {
+            return null;
+          }
+        })();
+
+        var form = document.getElementById('form');
+        var endpointInput = document.getElementById('endpoint');
+        var tokenInput = document.getElementById('token');
+        var daysSelect = document.getElementById('days');
+        var loadButton = document.getElementById('load');
+        var exportButton = document.getElementById('export');
+        var forgetButton = document.getElementById('forget');
+        var statusBox = document.getElementById('status');
+        var results = document.getElementById('results');
+        var notice = document.getElementById('notice');
+
+        var lastReport = null;
+
+        var EVENT_LABELS = {
+          app_open: '打开应用',
+          idea_created: '记下念头',
+          idea_updated: '编辑念头',
+          idea_status_changed: '念头状态变更',
+          idea_pinned: '置顶 / 取消置顶',
+          idea_deleted: '移到回收站',
+          idea_restored: '从回收站恢复',
+          idea_purged: '永久删除',
+          idea_upgraded: '升级为创意项目',
+          project_updated: '更新项目',
+          search_used: '使用搜索',
+          backup_exported: '导出备份',
+          backup_imported: '导入备份',
+          data_cleared: '清空本机数据',
+          feedback_opened: '打开反馈页',
+          feedback_submitted: '提交反馈',
+          telemetry_changed: '切换匿名统计开关'
+        };
+
+        var KIND_LABELS = {
+          bug: '遇到问题',
+          suggestion: '功能建议',
+          praise: '使用感受',
+          other: '其他'
+        };
+
+        var PLATFORM_LABELS = {
+          wechat: '微信内置浏览器',
+          ios: 'iOS',
+          android: 'Android',
+          macos: 'macOS',
+          windows: 'Windows',
+          linux: 'Linux',
+          other: '其他'
+        };
+
+        function showStatus(kind, text) {
+          statusBox.className = 'msg msg--' + kind;
+          statusBox.textContent = text;
+        }
+
+        function hideStatus() {
+          statusBox.className = 'msg hidden';
+          statusBox.textContent = '';
+        }
+
+        function text(value) {
+          return value === null || value === undefined ? '' : String(value);
+        }
+
+        function number(value) {
+          var parsed = typeof value === 'number' ? value : Number(value);
+          return Number.isFinite(parsed) ? parsed : 0;
+        }
+
+        function normalizeBase(raw) {
+          var trimmed = text(raw).trim().replace(/\/+$/, '');
+          if (!trimmed) return '';
+          try {
+            var parsed = new URL(trimmed);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+            return trimmed;
+          } catch (error) {
+            return '';
+          }
+        }
+
+        function formatDay(day) {
+          return text(day).slice(5);
+        }
+
+        function formatTime(at) {
+          var value = number(at);
+          if (!value) return '';
+          try {
+            return new Intl.DateTimeFormat('zh-CN', {
+              dateStyle: 'medium',
+              timeStyle: 'short'
+            }).format(new Date(value));
+          } catch (error) {
+            return new Date(value).toISOString();
+          }
+        }
+
+        function renderStats(totals) {
+          var items = [
+            ['活跃设备', totals.devices],
+            ['今天有动作的设备', totals.activeToday],
+            ['最近 7 天活跃设备', totals.active7d],
+            ['事件总数', totals.events],
+            ['会话数', totals.sessions],
+            ['收到反馈', totals.feedback]
+          ];
+          var host = document.getElementById('stats');
+          host.textContent = '';
+          items.forEach(function (item) {
+            var wrap = document.createElement('div');
+            wrap.className = 'stat';
+            var value = document.createElement('span');
+            value.className = 'stat__value';
+            value.textContent = text(number(item[1]));
+            var label = document.createElement('span');
+            label.className = 'stat__label';
+            label.textContent = item[0];
+            wrap.appendChild(value);
+            wrap.appendChild(label);
+            host.appendChild(wrap);
+          });
+        }
+
+        function renderBars(daily) {
+          var host = document.getElementById('bars');
+          host.textContent = '';
+          var rows = Array.isArray(daily) ? daily : [];
+          if (rows.length === 0) {
+            host.textContent = '这个时间段没有数据。';
+            return;
+          }
+          var max = 1;
+          rows.forEach(function (row) {
+            max = Math.max(max, number(row.events));
+          });
+          rows.forEach(function (row) {
+            var count = number(row.events);
+            var item = document.createElement('div');
+            item.className = 'bars__item';
+            item.title = text(row.day) + ' · ' + count + ' 次事件 · ' + number(row.devices) + ' 台设备';
+            var fill = document.createElement('div');
+            fill.className = count > 0 ? 'bars__fill' : 'bars__fill bars__fill--empty';
+            fill.style.height = Math.max(count > 0 ? 6 : 3, Math.round((count / max) * 100)) + '%';
+            var day = document.createElement('span');
+            day.className = 'bars__day';
+            day.textContent = formatDay(row.day);
+            item.appendChild(fill);
+            item.appendChild(day);
+            host.appendChild(item);
+          });
+        }
+
+        function renderPairs(id, rows, keyName, labelMap) {
+          var body = document.getElementById(id);
+          body.textContent = '';
+          var list = Array.isArray(rows) ? rows : [];
+          if (list.length === 0) {
+            var empty = document.createElement('tr');
+            var cell = document.createElement('td');
+            cell.colSpan = 2;
+            cell.textContent = '暂无数据。';
+            empty.appendChild(cell);
+            body.appendChild(empty);
+            return;
+          }
+          list.forEach(function (row) {
+            var tr = document.createElement('tr');
+            var name = document.createElement('td');
+            var raw = text(row[keyName]);
+            name.textContent = labelMap && labelMap[raw] ? labelMap[raw] : raw || '未知';
+            var count = document.createElement('td');
+            count.className = 'num';
+            count.textContent = text(number(row.count));
+            tr.appendChild(name);
+            tr.appendChild(count);
+            body.appendChild(tr);
+          });
+        }
+
+        function renderEvents(rows) {
+          var body = document.getElementById('events');
+          body.textContent = '';
+          var list = Array.isArray(rows) ? rows : [];
+          if (list.length === 0) {
+            var empty = document.createElement('tr');
+            var cell = document.createElement('td');
+            cell.colSpan = 3;
+            cell.textContent = '暂无数据。';
+            empty.appendChild(cell);
+            body.appendChild(empty);
+            return;
+          }
+          list.forEach(function (row) {
+            var tr = document.createElement('tr');
+            var name = document.createElement('td');
+            var raw = text(row.name);
+            name.textContent = EVENT_LABELS[raw] ? EVENT_LABELS[raw] + '（' + raw + '）' : raw;
+            var count = document.createElement('td');
+            count.className = 'num';
+            count.textContent = text(number(row.count));
+            var devices = document.createElement('td');
+            devices.className = 'num';
+            devices.textContent = text(number(row.devices));
+            tr.appendChild(name);
+            tr.appendChild(count);
+            tr.appendChild(devices);
+            body.appendChild(tr);
+          });
+        }
+
+        function renderFeedback(rows) {
+          var host = document.getElementById('feedback');
+          host.textContent = '';
+          var list = Array.isArray(rows) ? rows : [];
+          if (list.length === 0) {
+            var none = document.createElement('p');
+            none.className = 'hint';
+            none.textContent = '这个时间段还没有收到反馈。';
+            host.appendChild(none);
+            return;
+          }
+          list.forEach(function (row) {
+            var box = document.createElement('div');
+            box.className = 'fb';
+
+            var meta = document.createElement('div');
+            meta.className = 'fb__meta';
+            var tag = document.createElement('span');
+            tag.className = 'tag';
+            tag.textContent = KIND_LABELS[row.kind] || text(row.kind) || '其他';
+            meta.appendChild(tag);
+            meta.appendChild(document.createTextNode(formatTime(row.at)));
+            if (row.contact) {
+              meta.appendChild(document.createTextNode(' · 联系方式：' + row.contact));
+            }
+            box.appendChild(meta);
+
+            var message = document.createElement('p');
+            message.className = 'fb__msg';
+            message.textContent = text(row.message);
+            box.appendChild(message);
+
+            if (row.diagnostics) {
+              var diag = document.createElement('div');
+              diag.className = 'fb__meta';
+              diag.textContent =
+                '诊断：' +
+                text(row.diagnostics.app) +
+                ' / ' +
+                (PLATFORM_LABELS[row.diagnostics.platform] || text(row.diagnostics.platform)) +
+                ' / ' +
+                text(row.diagnostics.lang || '未知语言') +
+                ' / 念头 ' +
+                number(row.diagnostics.ideas) +
+                ' 条 / 项目 ' +
+                number(row.diagnostics.projects) +
+                ' 个';
+              box.appendChild(diag);
+            }
+
+            host.appendChild(box);
+          });
+        }
+
+        function render(report) {
+          lastReport = report;
+          var totals = report.totals || {};
+          var range = report.range || {};
+
+          var rangeText = document.getElementById('range');
+          rangeText.textContent =
+            '统计范围：最近 ' +
+            text(range.days || daysSelect.value) +
+            ' 天（' +
+            text(range.from || '').slice(0, 10) +
+            ' 至 ' +
+            text(range.to || '').slice(0, 10) +
+            '）';
+
+          renderStats(totals);
+          renderBars(report.daily);
+          renderEvents(report.events);
+          renderPairs('platforms', report.platforms, 'platform', PLATFORM_LABELS);
+          renderPairs('versions', report.versions, 'app', null);
+          renderFeedback(report.feedback);
+
+          results.className = '';
+          exportButton.disabled = false;
+          notice.className = 'msg hidden';
+        }
+
+        function parseReportError(status, body) {
+          if (status === 401 || status === 403) {
+            return '读取令牌不对，或者这个令牌没有读取权限。';
+          }
+          if (status === 404) {
+            return '这个地址上没有 /report 接口，确认一下后端是否已经部署。';
+          }
+          if (status >= 500) {
+            return '后端出错了（HTTP ' + status + '），去后端日志里看一眼。';
+          }
+          if (body && typeof body.error === 'string' && body.error) return body.error;
+          return '读取失败（HTTP ' + status + '）。';
+        }
+
+        function load() {
+          var base = normalizeBase(endpointInput.value);
+          var token = text(tokenInput.value).trim();
+
+          if (!base) {
+            showStatus('error', '后端地址必须是 http:// 或 https:// 开头的完整地址。');
+            return;
+          }
+          if (!token) {
+            showStatus('error', '请填入读取令牌。');
+            return;
+          }
+
+          hideStatus();
+          loadButton.disabled = true;
+          loadButton.textContent = '读取中…';
+
+          var url = base + '/report?days=' + encodeURIComponent(daysSelect.value);
+          var controller = new AbortController();
+          var timer = setTimeout(function () {
+            controller.abort();
+          }, 15000);
+
+          fetch(url, {
+            method: 'GET',
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
+            cache: 'no-store',
+            signal: controller.signal
+          })
+            .then(function (response) {
+              return response
+                .json()
+                .catch(function () {
+                  return null;
+                })
+                .then(function (body) {
+                  if (!response.ok) {
+                    throw new Error(parseReportError(response.status, body));
+                  }
+                  return body;
+                });
+            })
+            .then(function (report) {
+              if (!report || typeof report !== 'object') {
+                throw new Error('后端返回的不是运营数据，请检查接口实现。');
+              }
+              if (STORE) {
+                // 只在本次会话里记住令牌，关掉标签页就没了。
+                try {
+                  STORE.setItem(TOKEN_KEY, token);
+                } catch (error) {
+                  /* 隐私模式下写不进去也不影响使用。 */
+                }
+              }
+              render(report);
+              showStatus('ok', '已读取 ' + text((report.range || {}).days || '') + ' 天的数据。');
+            })
+            .catch(function (error) {
+              var message =
+                error && error.name === 'AbortError'
+                  ? '请求超时，检查一下后端地址是否可访问。'
+                  : error && error.message
+                    ? error.message
+                    : '读取失败，检查网络与后端地址。';
+              showStatus('error', message);
+            })
+            .then(function () {
+              clearTimeout(timer);
+              loadButton.disabled = false;
+              loadButton.textContent = '读取运营数据';
+            });
+        }
+
+        form.addEventListener('submit', function (event) {
+          event.preventDefault();
+          load();
+        });
+
+        forgetButton.addEventListener('click', function () {
+          tokenInput.value = '';
+          if (STORE) {
+            try {
+              STORE.removeItem(TOKEN_KEY);
+            } catch (error) {
+              /* 忽略。 */
+            }
+          }
+          lastReport = null;
+          results.className = 'hidden';
+          exportButton.disabled = true;
+          hideStatus();
+          notice.className = 'msg msg--warn';
+        });
+
+        exportButton.addEventListener('click', function () {
+          if (!lastReport) return;
+          var blob = new Blob([JSON.stringify(lastReport, null, 2)], {
+            type: 'application/json'
+          });
+          var url = URL.createObjectURL(blob);
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = 'nianbox-report-' + new Date().toISOString().slice(0, 10) + '.json';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(function () {
+            URL.revokeObjectURL(url);
+          }, 1000);
+        });
+
+        // 只回填地址与令牌，其他什么都不做：打开这一页不会自动请求后端。
+        if (STORE) {
+          try {
+            var saved = STORE.getItem(TOKEN_KEY);
+            if (saved) tokenInput.value = saved;
+          } catch (error) {
+            /* 忽略。 */
+          }
+        }
+        try {
+          var savedEndpoint = window.localStorage.getItem('nb.admin.endpoint');
+          if (savedEndpoint) endpointInput.value = savedEndpoint;
+        } catch (error) {
+          /* 忽略。 */
+        }
+        endpointInput.addEventListener('change', function () {
+          try {
+            window.localStorage.setItem('nb.admin.endpoint', normalizeBase(endpointInput.value));
+          } catch (error) {
+            /* 忽略。 */
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
