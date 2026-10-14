@@ -6,8 +6,9 @@
  *
  *   node scripts/generate-icons.mjs
  *
- * 图形与 public/favicon.svg 保持一致（同一个墨绿盒子标记），
- * 只是按不同用途栅格化成不同尺寸的 PNG：
+ * 图形与 public/favicon.svg、src/components/BrandMark.tsx 保持一致
+ * （同一个品牌星形：紫色圆角方底 + 白色星形），只是按不同用途
+ * 栅格化成不同尺寸的 PNG：
  *
  *   - icon-192.png / icon-512.png  : 圆角图形，四周透明，用于 manifest "any"
  *   - maskable-512.png             : 背景铺满，图形缩进安全区，用于 "maskable"
@@ -24,9 +25,9 @@ import zlib from 'node:zlib';
 const projectRoot = path.dirname(fileURLToPath(new URL('.', import.meta.url)));
 const outputDir = path.join(projectRoot, 'public', 'icons');
 
-/** 品牌色：墨绿底 + 暖白线条。 */
-const ACCENT = [47, 109, 91]; // #2F6D5B
-const INK = [246, 242, 233]; // #F6F2E9
+/** 品牌色：灵感紫底 + 星形暖白（对应 CSS --color-brand / --color-star）。 */
+const ACCENT = [119, 89, 221]; // #7759DD
+const INK = [255, 249, 233]; // #FFF9E9
 
 /* -------------------------------------------------------------------------- */
 /* 图形：全部在 512×512 的坐标系里描述，按目标尺寸等比缩放。                   */
@@ -34,7 +35,6 @@ const INK = [246, 242, 233]; // #F6F2E9
 
 const VIEW = 512;
 const CORNER_RADIUS = 112;
-const STROKE = 26;
 
 function sdRoundRect(px, py, cx, cy, hw, hh, r) {
   const qx = Math.abs(px - cx) - (hw - r);
@@ -44,23 +44,44 @@ function sdRoundRect(px, py, cx, cy, hw, hh, r) {
   return Math.hypot(ax, ay) + Math.min(Math.max(qx, qy), 0) - r;
 }
 
-function sdSegment(px, py, ax, ay, bx, by) {
-  const vx = bx - ax;
-  const vy = by - ay;
-  const wx = px - ax;
-  const wy = py - ay;
-  const lengthSq = vx * vx + vy * vy;
-  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, (wx * vx + wy * vy) / lengthSq));
-  return Math.hypot(wx - t * vx, wy - t * vy);
+/**
+ * 品牌星形：与 src/components/BrandMark.tsx 的 BRAND_STAR_PATH 完全同源，
+ * 使用同一个 96×96 视口坐标系与同一个缩放系数。
+ */
+const STAR_POINTS = [
+  [48, 5],
+  [57, 35],
+  [86, 23],
+  [64, 48],
+  [86, 73],
+  [57, 61],
+  [48, 91],
+  [39, 61],
+  [10, 73],
+  [32, 48],
+  [10, 23],
+  [39, 35],
+];
+const STAR_SCALE = 0.72;
+
+/** 射线法：判断 96 视口坐标下的点是否落在星形内部。 */
+function insideStar(u, v) {
+  let hit = false;
+  for (let i = 0, j = STAR_POINTS.length - 1; i < STAR_POINTS.length; j = i, i += 1) {
+    const [xi, yi] = STAR_POINTS[i];
+    const [xj, yj] = STAR_POINTS[j];
+    if (yi > v !== yj > v && u < ((xj - xi) * (v - yi)) / (yj - yi) + xi) {
+      hit = !hit;
+    }
+  }
+  return hit;
 }
 
-/** 盒子的图形：矩形描边 + 顶盖分隔线 + 取物口。 */
+/** 图形：品牌星形（512 视口坐标 → 96 视口 → 还原到原始路径坐标）。 */
 function insideMark(x, y) {
-  const half = STROKE / 2;
-  if (Math.abs(sdRoundRect(x, y, 256, 284, 138, 98, 32)) <= half) return true;
-  if (sdSegment(x, y, 118, 254, 394, 254) <= half) return true;
-  if (sdSegment(x, y, 226, 300, 286, 300) <= half) return true;
-  return false;
+  const u = 48 + (x * (96 / VIEW) - 48) / STAR_SCALE;
+  const v = 48 + (y * (96 / VIEW) - 48) / STAR_SCALE;
+  return insideStar(u, v);
 }
 
 /**
