@@ -115,6 +115,10 @@ const SECRET_KEYS = [
   'MAIL_API_BASE',
   'MAIL_API_KEY',
   'MAIL_FROM',
+  // 这两个是可选的显示名与形状提示，但文档里写了就必须真的能设，
+  // 否则「按文档配好了却完全不生效」是最难查的一类问题。
+  'MAIL_FROM_NAME',
+  'MAIL_PROVIDER',
 ];
 const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'PUBLIC_APP_URL'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
