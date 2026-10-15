@@ -76,8 +76,23 @@ const PROJECT_PROGRESSES = ['preparing', 'building', 'testing', 'released', 'pau
  * 对话模型（glm-*）和图像模型（cogview-*）。
  */
 const ZHIPU_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
-const ZHIPU_DEFAULT_CHAT_MODEL = 'glm-5.3';
-const ZHIPU_DEFAULT_IMAGE_MODEL = 'cogview-4-250304';
+/**
+ * 默认模型刻意选「免费也能跑通」的两个：
+ * glm-5.3 与 cogview-4 需要账号里有余额，只填一把 key 时会直接 429；
+ * 而 glm-4-flash 与 cogview-3-flash 在免费账号上就能返回真实结果。
+ * 充值之后想换回 glm-5.3 / cogview-4，只改 AI_MODEL / IMAGE_MODEL 两个变量即可。
+ */
+export const ZHIPU_DEFAULT_CHAT_MODEL = 'glm-4-flash';
+export const ZHIPU_DEFAULT_IMAGE_MODEL = 'cogview-3-flash';
+
+/**
+ * 服务商展示名兜底。
+ * 为什么要在服务端兜：PLAIN 变量（*_PROVIDER_LABEL）没有写进部署流程时，
+ * 一次重新部署就会把绑定删掉，界面上「数据发给了谁」会变成空白 —— 那不是缺一行配置，
+ * 而是隐私提示失真。所以按服务商给默认名，缺变量也不会静默留空。
+ */
+const PROVIDER_LABELS = { zhipu: '智谱 GLM', openai: 'OpenAI 兼容服务' };
+const IMAGE_PROVIDER_LABELS = { zhipu: '智谱 CogView', openai: 'OpenAI 兼容图像服务' };
 
 /**
  * 图片尺寸必须按服务商分别映射：OpenAI 的 1024x1365 智谱不认，
@@ -1282,9 +1297,15 @@ export function capabilities(env) {
     image: image.ready,
     mail: mail.ready,
     passwordReset: mail.ready,
-    // 供前端展示「数据会发给谁」，配置方必须如实填写。
-    aiProvider: ai.ready ? str(env.AI_PROVIDER_LABEL, 60) || new URL(ai.baseUrl).host : '',
-    imageProvider: image.ready ? str(env.IMAGE_PROVIDER_LABEL, 60) || new URL(image.baseUrl).host : '',
+    // 供前端展示「数据会发给谁」：显式标签 > 服务商默认名 > 域名。
+    aiProvider: ai.ready
+      ? str(env.AI_PROVIDER_LABEL, 60) || PROVIDER_LABELS[ai.provider] || hostOf(ai.baseUrl)
+      : '',
+    imageProvider: image.ready
+      ? str(env.IMAGE_PROVIDER_LABEL, 60) ||
+        IMAGE_PROVIDER_LABELS[image.provider] ||
+        hostOf(image.baseUrl)
+      : '',
     // 模型名不是密钥，回显出来是为了让「到底接的哪个模型」可以自证。
     aiModel: ai.ready ? ai.model : '',
     imageModel: image.ready ? image.model : '',
@@ -1492,7 +1513,8 @@ async function handleClassify(request, env) {
 
 const META_PROMPT = `你在帮用户把一条私人灵感抽象成「可以公开分享的海报素材」。
 严格要求：
-1. 只输出 JSON，字段为 theme（6 字以内的主题词）、mood（2-4 个情绪词）、metaphor（一句不超过 20 字的隐喻画面）、visuals（4-6 个可画出来的视觉元素，名词短语）。
+1. 只输出 JSON，字段为 theme（6 字以内的主题词）、mood、metaphor（一句不超过 20 字的隐喻画面）、visuals（可画出来的视觉元素，名词短语）。
+   mood 与 visuals 都必须是非空数组：mood 给 3 个情绪词，visuals 给 5 个视觉元素，禁止留空数组、禁止写 null。
 2. 绝对不要出现原始文字里的专有名词、人名、公司名、产品名、网址、邮箱、电话、@ 昵称、地点。
 3. 不要复述原句，只提炼气质。
 4. 全部用中文，风格轻盈、有创造力。`;
