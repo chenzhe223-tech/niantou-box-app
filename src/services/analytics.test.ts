@@ -45,6 +45,9 @@ function readQueue(): QueueItem[] {
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  window.localStorage.clear();
+  // Most analytics tests exercise the explicit opt-in path; production defaults to off.
+  window.localStorage.setItem('nb.telemetry.enabled.v1', 'on');
   fetchMock = vi.fn(() => Promise.resolve({ ok: true }));
   vi.stubGlobal('fetch', fetchMock);
 });
