@@ -187,6 +187,22 @@ export async function cloudRegister(input: RegisterInput): Promise<CloudUser> {
   return adopt(response);
 }
 
+export async function requestPasswordReset(email: string): Promise<{ requested: boolean; message?: string }> {
+  return cloudRequest('/auth/password/forgot', {
+    method: 'POST',
+    body: { email },
+    timeoutMs: 25_000,
+  });
+}
+
+export async function completePasswordReset(token: string, password: string): Promise<{ ok: boolean }> {
+  return cloudRequest('/auth/password/reset', {
+    method: 'POST',
+    body: { token, password },
+    timeoutMs: 25_000,
+  });
+}
+
 export async function cloudLogin(email: string, password: string): Promise<CloudUser> {
   const response = await cloudRequest<AuthResponse>('/auth/login', {
     method: 'POST',
