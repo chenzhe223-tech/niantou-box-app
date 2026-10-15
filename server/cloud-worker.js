@@ -610,7 +610,7 @@ async function handlePasswordResetRequest(request, env) {
           '请在 30 分钟内打开下面的链接设置新密码：', '',
           resetUrl.toString(), '',
           '此链接只能使用一次。如果不是你本人操作，请忽略这封邮件。',
-        ]].join('\n'),
+        ].join('\n'),
       }),
       signal: AbortSignal.timeout(20000),
     });
