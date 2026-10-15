@@ -20,6 +20,15 @@ export interface IdeaCardProps {
   onTogglePin: (idea: Idea) => void;
   onRequestDelete: (idea: Idea) => void;
   busy?: boolean;
+  /**
+   * 这条记录是否还没同步到云端（登录后仍留在本机待同步队列里）。
+   * 为 true 时在元信息里显示「仅本地」，让用户一眼看出哪几条还没上传。
+   */
+  pending?: boolean;
+  /** 是否处于多选模式（显示复选框）。 */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (idea: Idea) => void;
 }
 
 /**
@@ -34,18 +43,49 @@ export function IdeaCard({
   onTogglePin,
   onRequestDelete,
   busy = false,
+  pending = false,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
 }: IdeaCardProps) {
   const title = displayTitle(idea);
   const excerpt = contentExcerpt(idea);
   const category = categoryLabel(idea.category);
+  const className = [
+    'nb-idea',
+    idea.pinned ? 'nb-idea--pinned' : null,
+    selected ? 'nb-idea--selected' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <li className={idea.pinned ? 'nb-idea nb-idea--pinned' : 'nb-idea'}>
+    <li className={className}>
+      {selectable ? (
+        <label className="nb-idea__check">
+          <input
+            type="checkbox"
+            className="nb-idea__checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect?.(idea)}
+          />
+          <span className="nb-visually-hidden">
+            {selected ? '取消选择' : '选择'}
+            {title}
+          </span>
+        </label>
+      ) : null}
+
       <a
         className="nb-idea__link"
         href={paths.idea(idea.id)}
         onClick={(event) => {
           event.preventDefault();
+          // 多选模式下点卡片是「选/取消选」，不跳转，避免误触打断批量操作。
+          if (selectable) {
+            onToggleSelect?.(idea);
+            return;
+          }
           onOpen();
         }}
       >
@@ -61,6 +101,7 @@ export function IdeaCard({
         <StatusBadge status={idea.status} />
         {idea.pinned ? <PinnedBadge /> : null}
         {projectName ? <Badge tone="outline">项目：{projectName}</Badge> : null}
+        {pending ? <Badge tone="pending">仅本地</Badge> : null}
       </div>
 
       <div className="nb-idea__foot">
