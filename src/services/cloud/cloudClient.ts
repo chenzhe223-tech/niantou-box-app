@@ -64,6 +64,8 @@ export interface CloudCapabilities {
   image: boolean;
   /** 服务端是否配置了真实邮件服务。 */
   mail: boolean;
+  /** 服务端已部署密码重置接口且邮件服务可用。 */
+  passwordReset: boolean;
   /** 文本会发给哪个服务商（服务端如实填写，用于界面告知用户）。 */
   aiProvider: string;
   imageProvider: string;
@@ -75,6 +77,7 @@ export const NO_CAPABILITIES: CloudCapabilities = {
   abstract: false,
   image: false,
   mail: false,
+  passwordReset: false,
   aiProvider: '',
   imageProvider: '',
 };
@@ -251,6 +254,7 @@ export async function fetchCapabilities(signal?: AbortSignal): Promise<CloudCapa
       abstract: payload.abstract === true,
       image: payload.image === true,
       mail: payload.mail === true,
+      passwordReset: payload.passwordReset === true,
       aiProvider: typeof payload.aiProvider === 'string' ? payload.aiProvider : '',
       imageProvider: typeof payload.imageProvider === 'string' ? payload.imageProvider : '',
     };
