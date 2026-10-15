@@ -12,13 +12,16 @@ import { useMemo, useState } from 'react';
 import { useAppData } from '../app/AppDataProvider';
 import { formatDateTime } from '../app/format';
 import { paths } from '../app/routes';
-import { CategoryBadge, StatusBadge } from '../components/Badge';
+import { AiToolDialog } from '../components/AiToolDialog';
+import { Badge, CategoryBadge, StatusBadge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { SelectField, TagInputField, TextArea, TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/Toast';
+import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
+import { classifyIdea, trackClassifyOutcome } from '../services/aiClassify';
 import {
   setIdeaPinned,
   softDeleteIdea,
@@ -34,6 +37,7 @@ import {
   hasSavableContent,
   type Idea,
   type IdeaCategory,
+  type IdeaCategorySource,
   type IdeaStatus,
   type ProductForm,
 } from '../types/idea';
@@ -83,6 +87,17 @@ const PRODUCT_FORM_OPTIONS: ReadonlyArray<{ value: ProductFormChoice; label: str
   ...PRODUCT_FORMS.map((item) => ({ value: item.value, label: item.label })),
 ];
 
+/**
+ * 分类结果是谁给的，必须如实写出来。
+ * 关键词匹配的规则结果不允许被说成「AI 分类」。
+ */
+function categorySourceText(source: IdeaCategorySource | null): string {
+  if (source === 'ai') return '当前分类来自 AI 判断，可以改，也可以重新分类。';
+  if (source === 'rules') return '当前分类是按关键词判断的（暂未接入模型），可以改，也可以重新分类。';
+  if (source === 'manual') return '当前分类是你手动选的，自动分类不会覆盖它。';
+  return '还没有分类。登录云端账号后，保存时会自动试着判断一次。';
+}
+
 export function IdeaDetailPage({
   ideaId,
   navigate,
@@ -92,6 +107,7 @@ export function IdeaDetailPage({
 }) {
   const { ideas, projects } = useAppData();
   const toast = useToast();
+  const sync = useCloudSync();
   const idea = useMemo(
     () => ideas.find((item) => item.id === ideaId) ?? null,
     [ideas, ideaId],
@@ -103,6 +119,8 @@ export function IdeaDetailPage({
   const [contentError, setContentError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
 
   const linkedProject = useMemo(
     () => (idea ? projects.find((project) => project.ideaId === idea.id) ?? null : null),
@@ -146,7 +164,7 @@ export function IdeaDetailPage({
     setSaving(true);
     setError(null);
     try {
-      await updateIdea(idea.id, {
+      const patch = {
         title: current.title,
         content: current.content,
         category: current.category === 'none' ? null : current.category,
@@ -157,7 +175,17 @@ export function IdeaDetailPage({
         targetUsers: current.targetUsers,
         productForm: current.productForm === 'none' ? null : current.productForm,
         projectUrl: current.projectUrl,
-      });
+      };
+      /**
+       * 用户亲手改过分类，就把来源标成「手动」：
+       * 这样之后的自动分类不会悄悄覆盖他的选择（除非他点「重新分类」）。
+       * 分类没动过的记录不写 categorySource，避免把 AI 的结果误标成手动。
+       */
+      if (current.category !== stored.category) {
+        await updateIdea(idea.id, { ...patch, categorySource: 'manual' });
+      } else {
+        await updateIdea(idea.id, patch);
+      }
       toast.push({ message: '修改已保存。', tone: 'success' });
     } catch (caught) {
       const message = toNianBoxError(caught).message;
@@ -201,6 +229,25 @@ export function IdeaDetailPage({
     }
   };
 
+  /**
+   * 用户主动点「重新分类」：即使他之前手动选过分类，也按他的意愿覆盖一次。
+   * 分类失败不影响念头本身，这里只如实说明结果。
+   */
+  const handleReclassify = async () => {
+    if (classifying) return;
+    setClassifying(true);
+    try {
+      const outcome = await classifyIdea(idea.id, { force: true });
+      trackClassifyOutcome(outcome, 'detail');
+      toast.push({
+        message: outcome.message,
+        tone: outcome.status === 'applied' ? 'success' : outcome.status === 'failed' ? 'error' : 'info',
+      });
+    } finally {
+      setClassifying(false);
+    }
+  };
+
   return (
     <div className="nb-page">
       <div className="nb-backbar">
@@ -227,6 +274,7 @@ export function IdeaDetailPage({
         <div className="nb-badges nb-detail__badges">
           <StatusBadge status={idea.status} />
           <CategoryBadge category={idea.category} />
+          {isIdeaPending(sync, idea.id) ? <Badge tone="pending">仅本地</Badge> : null}
           {linkedProject ? (
             <a className="nb-link" href={paths.project(linkedProject.id)}>
               <Icon name="box" size={14} />
@@ -391,6 +439,52 @@ export function IdeaDetailPage({
           </Button>
         </div>
       </form>
+
+      <section className="nb-section" aria-labelledby="nb-detail-ai">
+        <div className="nb-section__head">
+          <h2 className="nb-section__title" id="nb-detail-ai">
+            AI 与灵感流转
+          </h2>
+        </div>
+        <div className="nb-card nb-card--pad nb-stack nb-stack--tight">
+          <p className="nb-kv">{categorySourceText(idea.categorySource)}</p>
+          <div className="nb-actionbar">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="refresh"
+              disabled={classifying}
+              onClick={() => {
+                void handleReclassify();
+              }}
+            >
+              {classifying ? '正在分类…' : '重新分类'}
+            </Button>
+            <Button size="sm" variant="secondary" icon="sparkle" onClick={() => setAiOpen(true)}>
+              交给 AI 工具
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="download"
+              onClick={() => navigate(paths.poster(idea.id))}
+            >
+              生成灵感海报
+            </Button>
+          </div>
+          <p className="nb-kv">
+            交给 AI 工具时提示词里会带上念头原文，发送前可以逐字检查并修改；
+            灵感海报会先把念头抽象成主题与意象，默认不把原文交给图像模型。
+          </p>
+        </div>
+      </section>
+
+      <AiToolDialog
+        open={aiOpen}
+        ideas={[idea]}
+        source="idea_detail"
+        onClose={() => setAiOpen(false)}
+      />
 
       <ConfirmDialog
         open={pendingDelete}
