@@ -155,6 +155,10 @@ Authorization: Bearer {MAIL_API_KEY}
 {"from":"显示名 <地址>","to":["收件人"],"subject":"...","text":"..."}
 ```
 
+> `MAIL_API_BASE` **自己带查询串**时（形如 `…/exec?secret=xxx`），服务端把它当作完整端点，
+> 原样 POST 上去，不会再拼 `/emails` 之类的路径后缀 —— 否则查询串会被拼坏
+> （`secret` 变成 `xxx/emails`，中转端一律拒绝）。这条有单元测试钉着。
+
 任何能收下这个 JSON 的 HTTPS 端点都能当邮件后端，包括一个挂在你自己 Google 账号下的 Apps Script：
 
 1. 打开 <https://script.google.com> → 新建项目 → 把下面的脚本贴进去；
@@ -175,18 +179,35 @@ Authorization: Bearer {MAIL_API_KEY}
 const SECRET = '换成你自己的随机字符串';
 
 function doPost(e) {
-  if (e.parameter.secret !== SECRET) throw new Error('forbidden');
-  const body = JSON.parse(e.postData.contents);
-  MailApp.sendEmail(body.to, body.subject, body.text, {
-    from: body.from,
-    name: 'NianBox',
-    replyTo: body.from,
-  });
-  return ContentService.createTextOutput(JSON.stringify({ id: 'apps-script' })).setMimeType(
+  try {
+    const p = (e && e.parameter) || {};
+    if (p.secret !== SECRET) return json({ ok: false, error: 'forbidden' });
+    const body = JSON.parse((e.postData && e.postData.contents) || '{}');
+    const to = Array.isArray(body.to) ? body.to.join(',') : String(body.to || '');
+    const subject = String(body.subject || '(no subject)');
+    const text = String(body.text || '');
+    if (!to) return json({ ok: false, error: 'missing-to' });
+    MailApp.sendEmail({ to: to, subject: subject, body: text, name: 'NianBox 念头盒' });
+    return json({ ok: true, id: 'apps-script', to: to, subject: subject });
+  } catch (err) {
+    return json({ ok: false, error: String(err) });
+  }
+}
+
+function doGet() {
+  return json({ ok: true, service: 'nianbox-mail-relay' });
+}
+
+function json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
     ContentService.MimeType.JSON,
   );
 }
 ```
+
+> 函数必须是**顶层函数**：整个脚本不能包在 `function myFunction(){…}` 里，
+> 否则 Google 会回 `Script function not found: doGet` —— 新建项目自带的空壳函数记得删掉。
+> 改完代码要「部署 → 管理部署 → 编辑 → 版本：新版本 → 部署」，`/exec` 网址不变。
 
 > 这条路同样是「上游真的成功才算已发送」，只是上游换成了 Google；免费 Gmail 账号大约每天 100 封。
 > 以后买了域名，只要把这四个变量换成 Resend 的三个值，**代码一行都不用改**。
