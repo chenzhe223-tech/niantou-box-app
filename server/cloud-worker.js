@@ -1106,6 +1106,7 @@ function capabilities(env) {
     abstract: ai.ready,
     image: image.ready,
     mail: mail.ready,
+    passwordReset: mail.ready,
     // 供前端展示「数据会发给谁」，配置方必须如实填写。
     aiProvider: ai.ready ? str(env.AI_PROVIDER_LABEL, 60) || new URL(ai.baseUrl).host : '',
     imageProvider: image.ready ? str(env.IMAGE_PROVIDER_LABEL, 60) || new URL(image.baseUrl).host : '',
