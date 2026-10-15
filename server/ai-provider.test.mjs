@@ -11,8 +11,10 @@ import {
   aiConfig,
   buildMailRequest,
   bytesToBase64,
+  callChat,
   capabilities,
   clampTemperature,
+  classifyByRules,
   imageConfig,
   mailConfig,
   parseJsonLoose,
@@ -22,6 +24,15 @@ import {
   sendMail,
   upstreamMessage,
 } from './cloud-worker.js';
+
+/** 造一个只带 ok / status / text 的上游响应，够 requestChat 用。 */
+function upstream(ok, status, payload) {
+  return {
+    ok,
+    status,
+    text: async () => (typeof payload === 'string' ? payload : JSON.stringify(payload)),
+  };
+}
 
 describe('服务商识别', () => {
   it('按域名认得出智谱', () => {
@@ -265,6 +276,104 @@ describe('发信失败必须如实报错', () => {
     expect(result.detail).toContain('http-403');
     expect(result.detail).toContain('domain is not verified');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('对话补全请求（GLM / OpenAI 兼容）', () => {
+  const env = { AI_API_KEY: 'test-key' };
+
+  it('打到智谱的对话接口，带上 key 与模型名', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body), headers: init.headers });
+      return upstream(true, 200, { choices: [{ message: { content: '{"category":"app"}' } }] });
+    });
+
+    const content = await callChat(env, [{ role: 'user', content: '想做个记账工具' }], {
+      json: true,
+    });
+
+    expect(content).toBe('{"category":"app"}');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://open.bigmodel.cn/api/paas/v4/chat/completions');
+    expect(calls[0].headers.authorization).toBe('Bearer test-key');
+    expect(calls[0].body.model).toBe('glm-5.3');
+    // 智谱不接受 temperature=0，任何情况下都不能发 0 出去。
+    expect(calls[0].body.temperature).toBeGreaterThan(0);
+    expect(calls[0].body.messages).toEqual([{ role: 'user', content: '想做个记账工具' }]);
+    vi.unstubAllGlobals();
+  });
+
+  it('参数被上游拒了（400）就一路退让到朴素请求，而不是直接判失败', async () => {
+    const bodies = [];
+    vi.stubGlobal('fetch', async (url, init) => {
+      bodies.push(JSON.parse(init.body));
+      // 前两次都因为可选参数被拒，第三次才拿到结果。
+      if (bodies.length <= 2) return upstream(false, 400, { error: { message: '暂不支持该参数' } });
+      return upstream(true, 200, { choices: [{ message: { content: '{"category":"life"}' } }] });
+    });
+
+    const content = await callChat(env, [{ role: 'user', content: '通勤太久' }], { json: true });
+
+    expect(content).toBe('{"category":"life"}');
+    expect(bodies).toHaveLength(3);
+    // 第 1 档：完整参数（关思考 + 结构化输出）。
+    expect(bodies[0].thinking).toEqual({ type: 'disabled' });
+    expect(bodies[0].response_format).toEqual({ type: 'json_object' });
+    // 第 2 档：摘掉 thinking，保留结构化输出。
+    expect(bodies[1].thinking).toBeUndefined();
+    expect(bodies[1].response_format).toEqual({ type: 'json_object' });
+    // 第 3 档：可选参数全部摘掉，只剩必要字段。
+    expect(bodies[2].thinking).toBeUndefined();
+    expect(bodies[2].response_format).toBeUndefined();
+    expect(bodies[2].model).toBe('glm-5.3');
+    expect(bodies[2].messages).toEqual([{ role: 'user', content: '通勤太久' }]);
+    vi.unstubAllGlobals();
+  });
+
+  it('上游真的报错时如实抛出，并带上上游原话', async () => {
+    vi.stubGlobal('fetch', async () => upstream(false, 401, { error: { message: 'API key 无效' } }));
+
+    await expect(callChat(env, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({
+      status: 502,
+      code: 'AI_UPSTREAM',
+      upstream: 'API key 无效',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('没配置服务时不发请求，直接说没配', async () => {
+    let called = 0;
+    vi.stubGlobal('fetch', async () => {
+      called += 1;
+      return upstream(true, 200, {});
+    });
+
+    await expect(callChat({}, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({
+      status: 503,
+      code: 'AI_NOT_CONFIGURED',
+    });
+    expect(called).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
+  it('上游返回空内容时也不假装成功', async () => {
+    vi.stubGlobal('fetch', async () => upstream(true, 200, { choices: [] }));
+
+    await expect(callChat(env, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({
+      code: 'AI_UPSTREAM',
+    });
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('没有 AI 时的本地兜底', () => {
+  it('关键词规则能给出一个合理的分类', () => {
+    expect(classifyByRules('想写一个自动整理的脚本')).toBe('skill');
+    expect(classifyByRules('做个记账的小程序')).toBe('web');
+    expect(classifyByRules('想做一个新的 App 界面')).toBe('app');
+    expect(classifyByRules('通勤路上总是忘带东西')).toBe('life');
+    expect(classifyByRules('今天天气不错')).toBe('other');
   });
 });
 
