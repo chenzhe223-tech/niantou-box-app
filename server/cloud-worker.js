@@ -64,6 +64,39 @@ const IDEA_STATUSES = ['inbox', 'research', 'ready', 'building', 'done', 'paused
 const PRODUCT_FORMS = ['app', 'website', 'miniprogram', 'skill', 'other'];
 const PROJECT_PROGRESSES = ['preparing', 'building', 'testing', 'released', 'paused'];
 
+/* -------------------------------------------------------------------------- */
+/* 外部服务：服务商标识与默认值                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 智谱 GLM / CogView（BigModel 开放平台）。
+ *
+ * 它的 v4 接口就是 OpenAI 兼容形状，`Authorization: Bearer <API Key>` 直接可用，
+ * 所以 Worker 里不需要 SDK、也不需要自己签 JWT：配一个 key 就能同时用上
+ * 对话模型（glm-*）和图像模型（cogview-*）。
+ */
+const ZHIPU_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
+const ZHIPU_DEFAULT_CHAT_MODEL = 'glm-5.3';
+const ZHIPU_DEFAULT_IMAGE_MODEL = 'cogview-4-250304';
+
+/**
+ * 图片尺寸必须按服务商分别映射：OpenAI 的 1024x1365 智谱不认，
+ * 而智谱的 3:4 要写 768x1344。只写死一套，总有一家会在 400 上挂掉。
+ */
+const IMAGE_SIZES = {
+  zhipu: { '1:1': '1024x1024', '3:4': '768x1344', '4:3': '1344x768', '16:9': '1440x720' },
+  openai: { '1:1': '1024x1024', '3:4': '1024x1365', '4:3': '1365x1024', '16:9': '1792x1024' },
+};
+
+/** 图像提示词上限：智谱 CogView 要求不超过 1024 字符。 */
+const MAX_IMAGE_PROMPT_CHARS = 1024;
+
+/** 默认每人每天最多生成几张海报底图（<= 0 表示不限制）。这里刷的是真钱，所以默认设上限。 */
+const DEFAULT_IMAGE_DAILY_LIMIT = 30;
+
+/** 单张底图落回 Worker 的字节上限：防止一次把几十兆塞进响应体。 */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -212,6 +245,116 @@ function num(value, fallback = 0) {
 
 function oneOf(value, allowed, fallback = null) {
   return typeof value === 'string' && allowed.includes(value) ? value : fallback;
+}
+
+function hostOf(rawUrl) {
+  try {
+    return new URL(String(rawUrl || '')).host.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 服务商识别：显式配置优先，其次看域名，最后按 OpenAI 兼容处理。
+ * 显式配置的意义是：即使换成自建代理（域名不认识），也能走对参数分支。
+ */
+export function resolveProvider(explicit, baseUrl) {
+  const hint = String(explicit || '').trim().toLowerCase();
+  if (hint) return hint;
+  const host = hostOf(baseUrl);
+  if (host.endsWith('bigmodel.cn')) return 'zhipu';
+  if (host.endsWith('openai.com') || host.endsWith('azure.com') || host.endsWith('deepseek.com')) {
+    return 'openai';
+  }
+  return 'openai';
+}
+
+/**
+ * 温度夹紧到 (0, 1]。
+ *
+ * 智谱的对话接口要求 temperature 落在 (0, 1]，传 0 会直接 400；
+ * 而「分类」这种任务天然的取值就是 0。这里统一抬到 0.01，
+ * 既保住了确定性，又不会因为一个参数把整条链路打挂。
+ */
+export function clampTemperature(value, fallback = 0.2) {
+  const n = Number(value);
+  const base = Number.isFinite(n) ? n : Number(fallback);
+  if (!Number.isFinite(base)) return 0.2;
+  return Math.min(Math.max(base, 0.01), 1);
+}
+
+/**
+ * 宽松 JSON 解析：模型偶尔会把 JSON 裹进 ```json 围栏，或在前后多写一句话。
+ * 直接 JSON.parse 失败就整条作废，代价太大。
+ */
+export function parseJsonLoose(text) {
+  const raw = String(text === undefined || text === null ? '' : text).trim();
+  if (raw === '') return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    /* 继续往下找 */
+  }
+  const fenced = raw.replace(/^```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+  try {
+    return JSON.parse(fenced);
+  } catch {
+    /* 继续往下找 */
+  }
+  const start = fenced.indexOf('{');
+  const end = fenced.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(fenced.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** 从服务商的错误响应里抠出一句人话（用于排障日志，不含任何密钥）。 */
+export function upstreamMessage(text) {
+  const raw = String(text || '');
+  const parsed = parseJsonLoose(raw);
+  const candidate =
+    (parsed && parsed.error && (parsed.error.message || parsed.error.msg)) ||
+    (parsed && (parsed.message || parsed.msg)) ||
+    '';
+  if (typeof candidate === 'string' && candidate.trim() !== '') return candidate.trim().slice(0, 200);
+  return raw.slice(0, 200);
+}
+
+/** 统一的日志摘要：错误码 + 服务商原话，正好卡在 detail 列的长度里。 */
+function errorDetail(error) {
+  if (!error) return 'error';
+  const code = error.code || (error.name === 'AbortError' ? 'timeout' : 'error');
+  const extra = error.upstream ? ` ${error.upstream}` : '';
+  return `${code}${extra}`.slice(0, 200);
+}
+
+/** 只在排障开关打开时回传一句内部细节，方便「模型名写错了」这类问题自证。 */
+function debugExtra(env, error) {
+  if (env.DEBUG_DETAIL !== '1') return {};
+  const detail = error && error.upstream ? error.upstream : errorDetail(error);
+  return { detail: String(detail).slice(0, 200) };
+}
+
+/** Workers 里没有 Buffer，手工分块 base64，避免大图把调用栈撑爆。 */
+export function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/** 海报底图尺寸：服务商不认识的比例退回 1:1，绝不发出一个必然 400 的尺寸。 */
+export function posterSizeFor(provider, aspect) {
+  const table = IMAGE_SIZES[provider] || IMAGE_SIZES.openai;
+  return table[aspect] || table['1:1'];
 }
 
 function nowMs() {
@@ -597,24 +740,19 @@ async function handlePasswordResetRequest(request, env) {
     const base = String(env.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/').trim();
     const resetUrl = new URL(base);
     resetUrl.hash = '/cloud?reset=' + encodeURIComponent(rawToken);
-    const response = await fetch(cfg.baseUrl + '/emails', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({
-        from: cfg.from,
-        to: [user.email],
-        subject: '【念头盒 NianBox】重置登录密码',
-        text: [
-          '你好，', '',
-          '我们收到了念头盒账号的密码重置请求。',
-          '请在 30 分钟内打开下面的链接设置新密码：', '',
-          resetUrl.toString(), '',
-          '此链接只能使用一次。如果不是你本人操作，请忽略这封邮件。',
-        ].join('\n'),
-      }),
-      signal: AbortSignal.timeout(20000),
+    const result = await sendMail(env, {
+      to: user.email,
+      subject: '【念头盒 NianBox】重置登录密码',
+      text: [
+        '你好，', '',
+        '我们收到了念头盒账号的密码重置请求。',
+        '请在 30 分钟内打开下面的链接设置新密码：', '',
+        resetUrl.toString(), '',
+        '此链接只能使用一次。如果不是你本人操作，请忽略这封邮件。',
+      ].join('\n'),
     });
-    if (!response.ok) throw new Error('mail-provider-error');
+    // 发不出去就把令牌删掉：宁可让用户重新申请，也不要留一个他以为已经发出去的链接。
+    if (!result.sent) throw new Error('mail-provider-error');
     await logService(env, user.id, 'password-reset', true, 'email-sent');
   } catch {
     await env.DB.prepare('DELETE FROM password_reset_tokens WHERE token_hash = ?').bind(tokenHash).run();
@@ -1075,28 +1213,56 @@ async function handleCapture(request, env) {
 /* AI：配置探测 / 分类 / 抽象                                                   */
 /* -------------------------------------------------------------------------- */
 
-function aiConfig(env) {
-  const baseUrl = (env.AI_BASE_URL || '').trim().replace(/\/+$/, '');
-  const apiKey = (env.AI_API_KEY || '').trim();
-  const model = (env.AI_MODEL || '').trim();
-  return { baseUrl, apiKey, model, ready: Boolean(baseUrl && apiKey && model) };
+/**
+ * 对话模型配置（自动分类 / 隐私抽象）。
+ *
+ * 配了 AI_PROVIDER=zhipu 之后只需要两样东西：AI_API_KEY 和（可选的）AI_MODEL。
+ * 地址与模型名都有服务商默认值兜底，少写一个变量不会变成「静默不可用」。
+ */
+export function aiConfig(env) {
+  const source = env || {};
+  const explicitBase = (source.AI_BASE_URL || '').trim();
+  const provider = resolveProvider(source.AI_PROVIDER, explicitBase);
+  const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
+  const apiKey = (source.AI_API_KEY || '').trim();
+  const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_CHAT_MODEL : '';
+  const model = (source.AI_MODEL || fallbackModel).trim();
+  return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
 }
 
-function imageConfig(env) {
-  const baseUrl = (env.IMAGE_BASE_URL || env.AI_BASE_URL || '').trim().replace(/\/+$/, '');
-  const apiKey = (env.IMAGE_API_KEY || env.AI_API_KEY || '').trim();
-  const model = (env.IMAGE_MODEL || '').trim();
-  return { baseUrl, apiKey, model, ready: Boolean(baseUrl && apiKey && model) };
+/** 图像模型配置。同一个智谱 key 直接覆盖 CogView，不必再配第二把钥匙。 */
+export function imageConfig(env) {
+  const source = env || {};
+  const explicitBase = (source.IMAGE_BASE_URL || source.AI_BASE_URL || '').trim();
+  const provider = resolveProvider(source.IMAGE_PROVIDER || source.AI_PROVIDER, explicitBase);
+  const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
+  const apiKey = (source.IMAGE_API_KEY || source.AI_API_KEY || '').trim();
+  const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_IMAGE_MODEL : '';
+  const model = (source.IMAGE_MODEL || fallbackModel).trim();
+  return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
 }
 
-function mailConfig(env) {
-  const baseUrl = (env.MAIL_API_BASE || '').trim().replace(/\/+$/, '');
-  const apiKey = (env.MAIL_API_KEY || '').trim();
-  const from = (env.MAIL_FROM || '').trim();
-  return { baseUrl, apiKey, from, ready: Boolean(baseUrl && apiKey && from) };
+/** 邮件服务商：Resend / SendGrid / 自建（默认按 Resend 的形状发）。 */
+export function resolveMailProvider(explicit, baseUrl) {
+  const hint = String(explicit || '').trim().toLowerCase();
+  if (hint) return hint;
+  const host = hostOf(baseUrl);
+  if (host.includes('sendgrid')) return 'sendgrid';
+  if (host.includes('mailgun')) return 'mailgun';
+  return 'resend';
 }
 
-function capabilities(env) {
+export function mailConfig(env) {
+  const source = env || {};
+  const baseUrl = (source.MAIL_API_BASE || '').trim().replace(/\/+$/, '');
+  const apiKey = (source.MAIL_API_KEY || '').trim();
+  const from = (source.MAIL_FROM || '').trim();
+  const fromName = (source.MAIL_FROM_NAME || '').trim();
+  const provider = resolveMailProvider(source.MAIL_PROVIDER, baseUrl);
+  return { baseUrl, apiKey, from, fromName, provider, ready: Boolean(baseUrl && apiKey && from) };
+}
+
+export function capabilities(env) {
   const ai = aiConfig(env);
   const image = imageConfig(env);
   const mail = mailConfig(env);
@@ -1110,6 +1276,11 @@ function capabilities(env) {
     // 供前端展示「数据会发给谁」，配置方必须如实填写。
     aiProvider: ai.ready ? str(env.AI_PROVIDER_LABEL, 60) || new URL(ai.baseUrl).host : '',
     imageProvider: image.ready ? str(env.IMAGE_PROVIDER_LABEL, 60) || new URL(image.baseUrl).host : '',
+    // 模型名不是密钥，回显出来是为了让「到底接的哪个模型」可以自证。
+    aiModel: ai.ready ? ai.model : '',
+    imageModel: image.ready ? image.model : '',
+    // 邮件服务商回显一个名字，方便运维时确认走的是哪条通道。
+    mailProvider: mail.ready ? mail.provider : '',
   };
 }
 
@@ -1125,16 +1296,10 @@ async function logService(env, userId, kind, ok, detail) {
   }
 }
 
-/**
- * 调一次 OpenAI 兼容的对话补全接口。
- * 只把必要的文本发出去，且不落任何日志。
- */
-async function callChat(env, messages, options = {}) {
-  const cfg = aiConfig(env);
-  if (!cfg.ready) throw new HttpError(503, 'AI 服务尚未配置。', 'AI_NOT_CONFIGURED');
-
+/** 发一次对话补全请求，返回原始结果（不抛错，交给调用方决定怎么退让）。 */
+async function requestChat(env, cfg, payload, timeoutMs) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs || 25_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -1142,33 +1307,76 @@ async function callChat(env, messages, options = {}) {
         'content-type': 'application/json',
         authorization: `Bearer ${cfg.apiKey}`,
       },
-      body: JSON.stringify({
-        model: cfg.model,
-        messages,
-        temperature: options.temperature ?? 0.2,
-        max_tokens: options.maxTokens ?? 600,
-        ...(options.json ? { response_format: { type: 'json_object' } } : {}),
-      }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new HttpError(502, `AI 服务返回错误（HTTP ${res.status}）。`, 'AI_UPSTREAM');
+    return { ok: res.ok, status: res.status, text: await res.text() };
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      throw new HttpError(504, 'AI 服务响应超时。', 'AI_TIMEOUT');
     }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new HttpError(502, 'AI 服务返回了无法解析的内容。', 'AI_UPSTREAM');
-    }
-    const content = parsed?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || content.trim() === '') {
-      throw new HttpError(502, 'AI 服务没有返回内容。', 'AI_UPSTREAM');
-    }
-    return content;
+    throw new HttpError(502, 'AI 服务连接失败。', 'AI_NETWORK');
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 调一次 OpenAI 兼容的对话补全接口（智谱 GLM 走的就是这条）。
+ *
+ * 只把必要的文本发出去，且不落任何日志。
+ *
+ * 关于「能力探测」：不同服务商对 response_format / thinking 这些可选参数的支持并不齐，
+ * 参数被拒时会返回 400。这里按「从最完整到最朴素」的顺序退让，而不是一遇到 400 就判失败——
+ * 否则换个模型就要改代码。
+ */
+async function callChat(env, messages, options = {}) {
+  const cfg = aiConfig(env);
+  if (!cfg.ready) throw new HttpError(503, 'AI 服务尚未配置。', 'AI_NOT_CONFIGURED');
+
+  const base = {
+    model: cfg.model,
+    messages,
+    temperature: clampTemperature(options.temperature, 0.2),
+    max_tokens: options.maxTokens ?? 600,
+  };
+  const shapes = [];
+  const withJson = options.json ? { ...base, response_format: { type: 'json_object' } } : base;
+  if (cfg.provider === 'zhipu' && options.json) {
+    // 分类是短任务，关掉思考链能省一半时间与额度；被拒就自动退回普通调用。
+    shapes.push({ ...withJson, thinking: { type: 'disabled' } });
+  }
+  shapes.push(withJson);
+  if (options.json) shapes.push(base);
+
+  const timeoutMs = options.timeoutMs || 25_000;
+  let last = { ok: false, status: 0, text: '' };
+  for (let i = 0; i < shapes.length; i += 1) {
+    last = await requestChat(env, cfg, shapes[i], timeoutMs);
+    if (last.ok) break;
+    const canRetry = i < shapes.length - 1 && (last.status === 400 || last.status === 422);
+    if (!canRetry) break;
+  }
+
+  if (!last.ok) {
+    const error = new HttpError(502, `AI 服务返回错误（HTTP ${last.status}）。`, 'AI_UPSTREAM');
+    error.upstream = upstreamMessage(last.text);
+    throw error;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(last.text);
+  } catch {
+    throw new HttpError(502, 'AI 服务返回了无法解析的内容。', 'AI_UPSTREAM');
+  }
+  const content = parsed?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || content.trim() === '') {
+    const error = new HttpError(502, 'AI 服务没有返回内容。', 'AI_UPSTREAM');
+    error.upstream = upstreamMessage(last.text);
+    throw error;
+  }
+  return content;
 }
 
 const CATEGORY_LABELS = {
@@ -1243,11 +1451,11 @@ async function handleClassify(request, env) {
       ],
       { json: true, maxTokens: 60, temperature: 0 },
     );
-    let category = null;
-    try {
-      category = JSON.parse(raw).category;
-    } catch {
-      const match = raw.match(/life|app|skill|web|other/);
+    // 模型不一定老实只吐 JSON（可能带围栏、带一句话），先宽松解析，再退到关键词。
+    const parsed = parseJsonLoose(raw);
+    let category = parsed && typeof parsed.category === 'string' ? parsed.category : null;
+    if (!IDEA_CATEGORIES.includes(category)) {
+      const match = String(raw).match(/life|app|skill|web|other/);
       category = match ? match[0] : null;
     }
     const finalCategory = oneOf(category, IDEA_CATEGORIES, classifyByRules(content));
@@ -1259,7 +1467,7 @@ async function handleClassify(request, env) {
       source: category ? 'ai' : 'rules',
     });
   } catch (error) {
-    await logService(env, user.id, 'classify', false, error && error.code ? error.code : 'error');
+    await logService(env, user.id, 'classify', false, errorDetail(error));
     // 分类失败绝不影响保存：退回规则分类，并如实标注来源。
     const fallback = classifyByRules(content);
     return json({
@@ -1268,6 +1476,7 @@ async function handleClassify(request, env) {
       label: CATEGORY_LABELS[fallback],
       source: 'rules',
       message: 'AI 分类暂时不可用，已用本地关键词规则兜底。',
+      ...debugExtra(env, error),
     });
   }
 }
@@ -1391,10 +1600,8 @@ async function handleAbstract(request, env) {
       ],
       { json: true, maxTokens: 400, temperature: 0.7 },
     );
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
+    const parsed = parseJsonLoose(raw);
+    if (!parsed || typeof parsed !== 'object') {
       throw new HttpError(502, '抽象结果无法解析。', 'AI_UPSTREAM');
     }
     const abstraction = {
@@ -1422,7 +1629,7 @@ async function handleAbstract(request, env) {
     }
     return json({ configured: true, source: 'ai', service: provider, abstraction, privacy: check });
   } catch (error) {
-    await logService(env, user.id, 'abstract', false, error && error.code ? error.code : 'error');
+    await logService(env, user.id, 'abstract', false, errorDetail(error));
     const abstraction = abstractLocally(content);
     const check = privacyCheck(abstraction, content);
     return json({
@@ -1432,6 +1639,7 @@ async function handleAbstract(request, env) {
       abstraction,
       privacy: check,
       message: 'AI 抽象暂时不可用，已改用本机规则，内容没有离开你的账号。',
+      ...debugExtra(env, error),
     });
   }
 }
@@ -1479,6 +1687,20 @@ async function handlePoster(request, env) {
     });
   }
 
+  // 生成图片是真金白银：每天给一个上限，防止密钥被刷爆。
+  const quota = await imageQuota(env, user.id);
+  if (quota.limit > 0 && quota.used >= quota.limit) {
+    return json(
+      {
+        configured: true,
+        generated: false,
+        quota,
+        error: `今天的海报额度已经用完了（每天 ${quota.limit} 张），明天再来。`,
+      },
+      429,
+    );
+  }
+
   // 只用抽象结果拼提示词，并明确要求无文字。
   const prompt = [
     STYLE_PROMPTS[style],
@@ -1489,50 +1711,138 @@ async function handlePoster(request, env) {
     'strictly no text, no letters, no watermark, no signature',
   ]
     .filter(Boolean)
-    .join('\n');
+    .join('\n')
+    .slice(0, MAX_IMAGE_PROMPT_CHARS);
 
-  const size = aspect === '1:1' ? '1024x1024' : '1024x1365';
+  const image = await generateImage(env, cfg, { prompt, aspect });
+  if (!image.ok) {
+    await logService(env, user.id, 'poster', false, image.detail);
+    return json({ configured: true, generated: false, error: image.error, ...debugExtra(env, { upstream: image.detail }) }, 502);
+  }
+
+  await logService(env, user.id, 'poster', true, style);
+  return json({
+    configured: true,
+    generated: true,
+    style,
+    aspect,
+    provider: capabilities(env).imageProvider,
+    // 统一回传 data: URL：服务商给的临时链接会过期，而且跨域取回来做下载/分享会被浏览器拦。
+    base64: image.dataUrl,
+    url: image.remoteUrl,
+    prompt,
+    privacy: check,
+    quota: { used: quota.used + 1, limit: quota.limit },
+  });
+}
+
+/** 今天已经成功生成过几张底图。 */
+async function imageQuota(env, userId) {
+  const configured = Number(env.AI_IMAGE_DAILY_LIMIT);
+  const limit = Number.isFinite(configured) ? configured : DEFAULT_IMAGE_DAILY_LIMIT;
+  const day = dayKey(nowMs(), num(env.TZ_OFFSET_HOURS, 8));
+  let used = 0;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM service_log WHERE user_id = ? AND day = ? AND kind = 'poster' AND ok = 1",
+    )
+      .bind(userId, day)
+      .first();
+    used = num(row && row.n);
+  } catch {
+    // 数不出来时不拦人：宁可少一层保护，也不要让正常用户生成不了。
+    used = 0;
+  }
+  return { used, limit };
+}
+
+/**
+ * 真正调一次图像接口。返回 { ok, dataUrl, remoteUrl, error, detail }。
+ *
+ * 两处服务商差异都在这里抹平：
+ *   1. 尺寸按服务商映射（智谱不认 1024x1365）；
+ *   2. 智谱只给一个临时 URL，OpenAI 给 base64 —— 统一在服务端落成 data: URL 再回前端，
+ *      这样「下载」和「系统分享」在 iOS / 微信里都能正常工作。
+ */
+async function generateImage(env, cfg, { prompt, aspect }) {
+  const size = posterSizeFor(cfg.provider, aspect);
+  const full = { model: cfg.model, prompt, size, n: 1 };
+  const shapes =
+    cfg.provider === 'zhipu'
+      ? [{ ...full, watermark_enabled: false }, full, { model: cfg.model, prompt }]
+      : [{ ...full, response_format: 'b64_json' }, full];
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
-    const res = await fetch(`${cfg.baseUrl}/images/generations`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify({ model: cfg.model, prompt, size, n: 1, response_format: 'b64_json' }),
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      await logService(env, user.id, 'poster', false, `http-${res.status}`);
-      return json({ configured: true, generated: false, error: `图像服务返回错误（HTTP ${res.status}）。` }, 502);
+    let text = '';
+    let ok = false;
+    let status = 0;
+    for (let i = 0; i < shapes.length; i += 1) {
+      const res = await fetch(`${cfg.baseUrl}/images/generations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify(shapes[i]),
+        signal: controller.signal,
+      });
+      status = res.status;
+      ok = res.ok;
+      text = await res.text();
+      if (ok) break;
+      // 只对「参数不被支持」退让；鉴权、余额、限流这类错误重试没有意义。
+      const canRetry = i < shapes.length - 1 && status === 400;
+      if (!canRetry) break;
     }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return json({ configured: true, generated: false, error: '图像服务返回了无法解析的内容。' }, 502);
+    if (!ok) {
+      return {
+        ok: false,
+        error: `图像服务返回错误（HTTP ${status}）。`,
+        detail: `http-${status} ${upstreamMessage(text)}`.slice(0, 200),
+      };
     }
-    const first = parsed?.data?.[0];
-    const base64 = first && (first.b64_json || first.b64);
-    const url = first && first.url;
-    if (!base64 && !url) {
-      return json({ configured: true, generated: false, error: '图像服务没有返回图片。' }, 502);
+
+    const parsed = parseJsonLoose(text);
+    const first = parsed && Array.isArray(parsed.data) ? parsed.data[0] : null;
+    const inline = first ? first.b64_json || first.b64 || '' : '';
+    const remoteUrl = first && typeof first.url === 'string' ? first.url : '';
+    if (!inline && !remoteUrl) {
+      return { ok: false, error: '图像服务没有返回图片。', detail: 'empty-image-payload' };
     }
-    await logService(env, user.id, 'poster', true, style);
-    return json({
-      configured: true,
-      generated: true,
-      style,
-      aspect,
-      provider: capabilities(env).imageProvider,
-      base64: base64 || '',
-      url: base64 ? '' : url,
-      prompt,
-      privacy: check,
-    });
+
+    let base64 = typeof inline === 'string' ? inline : '';
+    let mime = typeof first?.mime_type === 'string' && first.mime_type ? first.mime_type : 'image/png';
+    if (!base64 && remoteUrl) {
+      const download = await fetch(remoteUrl);
+      if (!download.ok) {
+        return {
+          ok: false,
+          error: '图片生成成功，但从图像服务取回时失败，请再试一次。',
+          detail: `download-${download.status}`,
+        };
+      }
+      const bytes = new Uint8Array(await download.arrayBuffer());
+      if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
+        return { ok: false, error: '图片文件异常，已停止返回。', detail: `bytes-${bytes.length}` };
+      }
+      const type = download.headers.get('content-type') || '';
+      if (type.startsWith('image/')) mime = type.split(';')[0];
+      base64 = bytesToBase64(bytes);
+    }
+    if (!base64) return { ok: false, error: '图像服务没有返回图片。', detail: 'empty-bytes' };
+
+    return {
+      ok: true,
+      // 已经是 data: 前缀就原样返回，前端两种写法都认。
+      dataUrl: base64.startsWith('data:') ? base64 : `data:${mime};base64,${base64}`,
+      remoteUrl,
+    };
   } catch (error) {
-    await logService(env, user.id, 'poster', false, 'network');
-    return json({ configured: true, generated: false, error: '图像服务连接失败，请稍后重试。' }, 502);
+    const aborted = error && error.name === 'AbortError';
+    return {
+      ok: false,
+      error: aborted ? '图像服务响应超时，请稍后重试。' : '图像服务连接失败，请稍后重试。',
+      detail: aborted ? 'timeout' : 'network',
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -1541,6 +1851,100 @@ async function handlePoster(request, env) {
 /* -------------------------------------------------------------------------- */
 /* 邮件                                                                        */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * 各邮件服务商的请求形状。
+ *
+ * 只有一处真差异：Resend 说 `to: [...]`，SendGrid 说
+ * `personalizations[0].to[0].email`。适配器只做这一层翻译，失败一律如实上报，
+ * 绝不把「我没配好」包装成「已发送」。
+ */
+export function buildMailRequest(cfg, { to, subject, text }) {
+  const from = cfg.fromName ? `${cfg.fromName} <${cfg.from}>` : cfg.from;
+  if (cfg.provider === 'sendgrid') {
+    return {
+      url: `${cfg.baseUrl}/v3/mail/send`,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: cfg.from, ...(cfg.fromName ? { name: cfg.fromName } : {}) },
+        subject,
+        content: [{ type: 'text/plain', value: text }],
+      }),
+    };
+  }
+  if (cfg.provider === 'mailgun') {
+    const form = new URLSearchParams();
+    form.set('from', from);
+    form.set('to', to);
+    form.set('subject', subject);
+    form.set('text', text);
+    return {
+      url: `${cfg.baseUrl}/messages`,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        // Mailgun 用 Basic：用户名固定 api，口令就是私钥。
+        authorization: `Basic ${btoa(`api:${cfg.apiKey}`)}`,
+      },
+      body: form.toString(),
+    };
+  }
+  // 默认：Resend 形状，自建中转也按这个收。
+  return {
+    url: `${cfg.baseUrl}/emails`,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify({ from, to: [to], subject, text }),
+  };
+}
+
+/**
+ * 服务端发一封纯文本邮件。
+ *
+ * 返回 { configured, sent, id, error, detail } —— 调用方据此如实告诉用户，
+ * 永远不会出现「返回成功但其实没发出去」。
+ */
+export async function sendMail(env, { to, subject, text }) {
+  const cfg = mailConfig(env);
+  if (!cfg.ready) {
+    return { configured: false, sent: false, error: '邮件服务尚未配置。', detail: 'not-configured' };
+  }
+  const request = buildMailRequest(cfg, { to, subject, text });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(request.url, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+      signal: controller.signal,
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      return {
+        configured: true,
+        sent: false,
+        error: `邮件服务返回错误（HTTP ${res.status}）。`,
+        detail: `http-${res.status} ${upstreamMessage(raw)}`.slice(0, 200),
+      };
+    }
+    const parsed = parseJsonLoose(raw);
+    const id =
+      (parsed && (parsed.id || parsed.message_id || parsed.messageId)) ||
+      res.headers.get('x-message-id') ||
+      '';
+    return { configured: true, sent: true, id: String(id || ''), detail: 'sent' };
+  } catch (error) {
+    const aborted = error && error.name === 'AbortError';
+    return {
+      configured: true,
+      sent: false,
+      error: aborted ? '邮件服务响应超时，请稍后重试。' : '邮件服务连接失败，请稍后重试。',
+      detail: aborted ? 'timeout' : 'network',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function handleMail(request, env) {
   const user = await authenticate(request, env);
@@ -1554,41 +1958,21 @@ async function handleMail(request, env) {
   }
   if (!text.trim()) throw new HttpError(400, '邮件正文为空。', 'EMPTY_BODY');
 
-  const cfg = mailConfig(env);
-  if (!cfg.ready) {
+  const result = await sendMail(env, { to, subject, text });
+  if (!result.configured) {
     return json({
       configured: false,
       sent: false,
       message: '服务端尚未配置邮件服务，请用你的邮件应用确认并发送。',
     });
   }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const res = await fetch(`${cfg.baseUrl}/emails`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify({ from: cfg.from, to: [to], subject, text }),
-      signal: controller.signal,
-    });
-    const raw = await res.text();
-    if (!res.ok) {
-      await logService(env, user.id, 'mail', false, `http-${res.status}`);
-      return json({ configured: true, sent: false, error: `邮件服务返回错误（HTTP ${res.status}）。` }, 502);
-    }
-    let id = '';
-    try {
-      id = String(JSON.parse(raw).id || '');
-    } catch {
-      id = '';
-    }
-    await logService(env, user.id, 'mail', true, 'sent');
-    return json({ configured: true, sent: true, id });
-  } catch (error) {
-    await logService(env, user.id, 'mail', false, 'network');
-    return json({ configured: true, sent: false, error: '邮件服务连接失败，请稍后重试。' }, 502);
-  } finally {
-    clearTimeout(timer);
+  if (!result.sent) {
+    await logService(env, user.id, 'mail', false, result.detail);
+    return json(
+      { configured: true, sent: false, error: result.error, ...debugExtra(env, { upstream: result.detail }) },
+      502,
+    );
   }
+  await logService(env, user.id, 'mail', true, 'sent');
+  return json({ configured: true, sent: true, id: result.id });
 }
