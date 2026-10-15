@@ -311,6 +311,87 @@ export interface LocalPosterResult {
   height: number;
 }
 
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('图片加载失败。'));
+    image.src = src;
+  });
+}
+
+/**
+ * 给 AI 生成的海报补一条固定品牌页脚。
+ *
+ * 为什么必须有这一步：
+ * 1. 图像模型给的图不保证「干净」——免费档的 CogView 会在右下角打上「AI 生成」水印，
+ *    拿这种图当分享海报既不统一也不好看。裁掉底部一小条再补上品牌紫页脚，
+ *    既盖住水印，又让六种风格的海报有一致的品牌收尾。
+ * 2. 页脚的星形来自 BrandMark 的同一段路径，和页面上的 Logo 是同一个形状，
+ *    不会出现「换个页面就换个星星」的情况。
+ *
+ * 画布用的是同一个 data: URL，不跨域，因此 toDataURL 不会被污染。
+ * 任何一步失败都返回 null，由调用方保留原图 —— 叠加品牌标识不该让用户拿不到图。
+ */
+export async function applyBrandFooter(
+  dataUrl: string,
+  aspect: PosterAspect,
+): Promise<string | null> {
+  try {
+    const ratio = (POSTER_ASPECTS.find((item) => item.value === aspect) ?? POSTER_ASPECTS[0]).ratio;
+    const width = 1080;
+    const height = Math.round(width / ratio);
+    // 页脚高度取 8.5%：足以盖住服务商打在右下角的水印，又不至于吃掉画面。
+    const bandHeight = Math.round(height * 0.085);
+    const artHeight = height - bandHeight;
+
+    const source = await loadImage(dataUrl);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // 原图按 cover 方式铺满画面区，不留白边。
+    const scale = Math.max(width / source.width, artHeight / source.height);
+    const drawWidth = source.width * scale;
+    const drawHeight = source.height * scale;
+    ctx.drawImage(
+      source,
+      (width - drawWidth) / 2,
+      (artHeight - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    );
+
+    // 品牌页脚：品牌紫底 + 米白星形与字标。
+    const band = readPaletteColor('--nb-accent', '--nb-ink');
+    const onBand = readPaletteColor('--nb-star', '--nb-white');
+    ctx.fillStyle = band;
+    ctx.fillRect(0, artHeight, width, bandHeight);
+
+    const starSize = bandHeight * 0.62;
+    const nameSize = Math.round(bandHeight * 0.42);
+    ctx.font = `600 ${nameSize}px ${readToken('--nb-font') || 'sans-serif'}`;
+    const nameText = '念头盒 NianBox';
+    const gap = bandHeight * 0.22;
+    const textWidth = ctx.measureText(nameText).width;
+    const groupWidth = starSize + gap + textWidth;
+    const groupLeft = (width - groupWidth) / 2;
+    const centerY = artHeight + bandHeight / 2;
+
+    drawStar(ctx, groupLeft + starSize / 2, centerY, starSize, onBand);
+    ctx.fillStyle = onBand;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(nameText, groupLeft + starSize + gap, centerY);
+
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 在本机画一张品牌模板海报。
  *
