@@ -15,6 +15,8 @@
  *   POST /auth/logout                注销当前令牌
  *   GET  /auth/me                    当前账号 + 已登录设备
  *   POST /auth/password              修改口令（改完其它设备令牌全部失效）
+ *   POST /auth/password/forgot       请求邮箱密码重置链接
+ *   POST /auth/password/reset        使用一次性令牌设置新密码
  *   GET  /sync/pull?since=<cursor>   增量拉取（不带 since = 全量快照）
  *   POST /sync/push                  批量提交本地变更
  *   POST /capture                    官网快速记录：直接落进个人收件箱
@@ -93,6 +95,12 @@ export default {
       }
       if (request.method === 'POST' && path === '/auth/password') {
         return await handlePassword(request, env);
+      }
+      if (request.method === 'POST' && path === '/auth/password/forgot') {
+        return await handlePasswordResetRequest(request, env);
+      }
+      if (request.method === 'POST' && path === '/auth/password/reset') {
+        return await handlePasswordReset(request, env);
       }
 
       if (request.method === 'GET' && path === '/sync/pull') {
@@ -557,6 +565,96 @@ async function handleLogin(request, env) {
     cursor: seq,
     full: false,
   });
+}
+
+
+async function handlePasswordResetRequest(request, env) {
+  const body = await readJson(request);
+  const email = assertEmail(normalizeEmail(body.email));
+  await assertLoginAllowed(request, env);
+
+  const cfg = mailConfig(env);
+  if (!cfg.ready) {
+    throw new HttpError(503, '密码找回邮件服务尚未配置，请联系念头盒维护者。', 'PASSWORD_RESET_NOT_CONFIGURED');
+  }
+
+  // Do not disclose whether an email address is registered.
+  const message = '如果该邮箱已注册且邮件服务可用，我们会发送密码重置链接。请检查收件箱和垃圾邮件。';
+  const user = await env.DB.prepare('SELECT id, email FROM users WHERE email = ?')
+    .bind(email).first();
+  if (!user) return json({ requested: true, message });
+
+  const now = nowMs();
+  await env.DB.prepare('DELETE FROM password_reset_tokens WHERE user_id = ? OR expires_at <= ?')
+    .bind(user.id, now).run();
+  const rawToken = randomToken(32);
+  const tokenHash = await sha256Hex(rawToken);
+  await env.DB.prepare(
+    'INSERT INTO password_reset_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
+  ).bind(tokenHash, user.id, now, now + 30 * 60 * 1000).run();
+
+  try {
+    const base = String(env.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/').trim();
+    const resetUrl = new URL(base);
+    resetUrl.hash = '/cloud?reset=' + encodeURIComponent(rawToken);
+    const response = await fetch(cfg.baseUrl + '/emails', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.apiKey },
+      body: JSON.stringify({
+        from: cfg.from,
+        to: [user.email],
+        subject: '【念头盒 NianBox】重置登录密码',
+        text: [
+          '你好，', '',
+          '我们收到了念头盒账号的密码重置请求。',
+          '请在 30 分钟内打开下面的链接设置新密码：', '',
+          resetUrl.toString(), '',
+          '此链接只能使用一次。如果不是你本人操作，请忽略这封邮件。',
+        ].join('\\n'),
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) throw new Error('mail-provider-error');
+    await logService(env, user.id, 'password-reset', true, 'email-sent');
+  } catch {
+    await env.DB.prepare('DELETE FROM password_reset_tokens WHERE token_hash = ?').bind(tokenHash).run();
+    await logService(env, user.id, 'password-reset', false, 'email-failed');
+    // Keep the response generic; never expose account existence or provider details.
+  }
+  return json({ requested: true, message });
+}
+
+async function handlePasswordReset(request, env) {
+  const body = await readJson(request);
+  const token = str(body.token, 200).trim();
+  const password = assertPassword(body.password);
+  if (!token) throw new HttpError(400, '重置链接无效或已过期，请重新申请。', 'RESET_TOKEN_INVALID');
+
+  const now = nowMs();
+  const tokenHash = await sha256Hex(token);
+  const reset = await env.DB.prepare(
+    'SELECT user_id AS userId FROM password_reset_tokens WHERE token_hash = ? AND expires_at > ?',
+  ).bind(tokenHash, now).first();
+  if (!reset || typeof reset.userId !== 'string' || !reset.userId) {
+    throw new HttpError(400, '重置链接无效或已过期，请重新申请。', 'RESET_TOKEN_INVALID');
+  }
+
+  // Consume the single-use token conditionally; concurrent use cannot reset twice.
+  const consumed = await env.DB.prepare(
+    'DELETE FROM password_reset_tokens WHERE token_hash = ? AND expires_at > ?',
+  ).bind(tokenHash, now).run();
+  if (Number(consumed?.meta?.changes ?? 0) !== 1) {
+    throw new HttpError(400, '重置链接无效或已过期，请重新申请。', 'RESET_TOKEN_INVALID');
+  }
+
+  const passwordHash = await hashPassword(password);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
+      .bind(passwordHash, nowMs(), reset.userId),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(reset.userId),
+    env.DB.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').bind(reset.userId),
+  ]);
+  return json({ ok: true });
 }
 
 async function handleLogout(request, env) {
