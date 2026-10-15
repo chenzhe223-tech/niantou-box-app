@@ -91,6 +91,10 @@ const ZHIPU_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
  * glm-5.3 与 cogview-4 需要账号里有余额，只填一把 key 时会直接 429；
  * 而 glm-4-flash 与 cogview-3-flash 在免费账号上就能返回真实结果。
  * 充值之后想换回 glm-5.3 / cogview-4，只改 AI_MODEL / IMAGE_MODEL 两个变量即可。
+ *
+ * 这两个名字还兼任**兜底模型**：把主模型配成 glm-5.3 之后，万一账号余额没充上，
+ * 请求会按 AI_FALLBACK_MODELS → 这里的默认值依次退让，而不是整条 AI 链路直接挂掉。
+ * 「配了贵模型但账号里没额度」是最容易踩的一脚，不该因此连分类都做不了。
  */
 export const ZHIPU_DEFAULT_CHAT_MODEL = 'glm-4-flash';
 export const ZHIPU_DEFAULT_IMAGE_MODEL = 'cogview-3-flash';
@@ -1419,6 +1423,35 @@ async function handleCapture(request, env) {
  * 配了 AI_PROVIDER=zhipu 之后只需要两样东西：AI_API_KEY 和（可选的）AI_MODEL。
  * 地址与模型名都有服务商默认值兜底，少写一个变量不会变成「静默不可用」。
  */
+/** 把逗号 / 分号 / 空白分隔的模型名列表拆开，顺带丢掉空项。 */
+function listOfModels(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  return String(value || '')
+    .split(/[,，;；\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 主模型 + 显式备用模型 + 服务商默认模型，拼成一条「按顺序试」的链。
+ *
+ * 为什么要链：把 AI_MODEL 换成 glm-5.3 之后，只要账号里没余额，上游会一直返回
+ * 429 + 1113「余额不足或无可用资源包」。与其让整站 AI 变成不可用，不如如实降级到
+ * 还跑得动的模型，并把整条链在 /capabilities 里回显出来 —— 用户能一眼看出
+ * 「我配的是 glm-5.3，但现在实际兜底在 glm-4-flash 上」，充值后无需改任何配置。
+ */
+export function modelChain(primary, fallbacks, defaults) {
+  const seen = new Set();
+  const chain = [];
+  for (const item of [primary, ...listOfModels(fallbacks), ...(defaults || [])]) {
+    const name = String(item || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    chain.push(name);
+  }
+  return chain;
+}
+
 export function aiConfig(env) {
   const source = env || {};
   const explicitBase = (source.AI_BASE_URL || '').trim();
@@ -1427,7 +1460,12 @@ export function aiConfig(env) {
   const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
   const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_CHAT_MODEL : '';
   const model = (source.AI_MODEL || fallbackModel).trim();
-  return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
+  const models = modelChain(
+    model,
+    source.AI_FALLBACK_MODELS,
+    provider === 'zhipu' && apiKey ? [ZHIPU_DEFAULT_CHAT_MODEL] : [],
+  );
+  return { baseUrl, apiKey, model, models, provider, ready: Boolean(baseUrl && apiKey && model) };
 }
 
 /** 图像模型配置。同一个智谱 key 直接覆盖 CogView，不必再配第二把钥匙。 */
@@ -1443,7 +1481,12 @@ export function imageConfig(env) {
   const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
   const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_IMAGE_MODEL : '';
   const model = (source.IMAGE_MODEL || fallbackModel).trim();
-  return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
+  const models = modelChain(
+    model,
+    source.IMAGE_FALLBACK_MODELS,
+    provider === 'zhipu' && apiKey ? [ZHIPU_DEFAULT_IMAGE_MODEL] : [],
+  );
+  return { baseUrl, apiKey, model, models, provider, ready: Boolean(baseUrl && apiKey && model) };
 }
 
 /**
@@ -1499,8 +1542,17 @@ export function capabilities(env) {
     // 模型名不是密钥，回显出来是为了让「到底接的哪个模型」可以自证。
     aiModel: ai.ready ? ai.model : '',
     imageModel: image.ready ? image.model : '',
+    // 整条退让链：第 1 个是配置的主模型，后面是额度不足/模型不可用时依次兜底的模型。
+    // 回显整条链而不是只回主模型名，是为了避免「配置写着 glm-5.3，实际一直跑在免费档」
+    // 这种看不出来的落差 —— 界面据此可以如实说明「当前实际兜底在哪个模型上」。
+    aiModels: ai.ready ? ai.models : [],
+    imageModels: image.ready ? image.models : [],
     // 邮件服务商回显一个名字，方便运维时确认走的是哪条通道。
     mailProvider: mail.ready ? mail.provider : '',
+    // 发件地址不是密钥（每封信的头部都写着它），回显出来是为了让「投递不出去」有迹可查：
+    // 到底是发件域名没验，还是根本还挂着默认发送地址。
+    mailFrom: mail.ready ? mail.from : '',
+    mailFromName: mail.ready ? mail.fromName : '',
   };
 }
 
@@ -1550,38 +1602,74 @@ async function requestChat(env, cfg, payload, timeoutMs) {
  * 参数被拒时会返回 400。这里按「从最完整到最朴素」的顺序退让，而不是一遇到 400 就判失败——
  * 否则换个模型就要改代码。
  */
+
+/**
+ * 这次失败值不值得换下一个模型再试一次。
+ *
+ * 判据只认「换模型有意义」的几类：额度不够、被限流、模型名不被认。
+ * 鉴权失败（401/403）与参数错误换模型也没用，如实抛出去更好查。
+ */
+export function shouldTryNextModel(status, text) {
+  if (status === 429 || status === 402 || status === 404) return true;
+  const detail = String(text || '');
+  if (/1113|1112|余额不足|无可用资源包|资源包|insufficient|quota|rate.?limit|exceeded/i.test(detail)) {
+    return true;
+  }
+  // 上游有时把「模型不存在」写成 400 + model 字样；这种也值得退到兜底模型。
+  return status === 400 && /\bmodel\b|模型/i.test(detail);
+}
+
 export async function callChat(env, messages, options = {}) {
   const cfg = aiConfig(env);
   if (!cfg.ready) throw new HttpError(503, 'AI 服务尚未配置。', 'AI_NOT_CONFIGURED');
 
-  const base = {
-    model: cfg.model,
-    messages,
-    temperature: clampTemperature(options.temperature, 0.2),
-    max_tokens: options.maxTokens ?? 600,
-  };
-  const shapes = [];
-  const withJson = options.json ? { ...base, response_format: { type: 'json_object' } } : base;
-  if (cfg.provider === 'zhipu' && options.json) {
-    // 分类是短任务，关掉思考链能省一半时间与额度；被拒就自动退回普通调用。
-    shapes.push({ ...withJson, thinking: { type: 'disabled' } });
-  }
-  shapes.push(withJson);
-  if (options.json) shapes.push(base);
-
+  const models = cfg.models && cfg.models.length > 0 ? cfg.models : [cfg.model];
   const timeoutMs = options.timeoutMs || 25_000;
-  let last = { ok: false, status: 0, text: '' };
-  for (let i = 0; i < shapes.length; i += 1) {
-    last = await requestChat(env, cfg, shapes[i], timeoutMs);
+  let last = { ok: false, status: 0, text: '', model: models[0] };
+  const tried = [];
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    tried.push(model);
+    const base = {
+      model,
+      messages,
+      temperature: clampTemperature(options.temperature, 0.2),
+      max_tokens: options.maxTokens ?? 600,
+    };
+    const withJson = options.json ? { ...base, response_format: { type: 'json_object' } } : base;
+    const shapes = [];
+    if (cfg.provider === 'zhipu' && options.json) {
+      // 分类是短任务，关掉思考链能省一半时间与额度；被拒就自动退回普通调用。
+      shapes.push({ ...withJson, thinking: { type: 'disabled' } });
+    }
+    shapes.push(withJson);
+    if (options.json) shapes.push(base);
+
+    for (let i = 0; i < shapes.length; i += 1) {
+      last = { ...(await requestChat(env, cfg, shapes[i], timeoutMs)), model };
+      if (last.ok) break;
+      const canRetry = i < shapes.length - 1 && (last.status === 400 || last.status === 422);
+      if (!canRetry) break;
+    }
     if (last.ok) break;
-    const canRetry = i < shapes.length - 1 && (last.status === 400 || last.status === 422);
-    if (!canRetry) break;
+    // 主模型因为额度/限流跑不动时，退到链上的下一个模型；都不行就如实上报。
+    if (index < models.length - 1 && shouldTryNextModel(last.status, last.text)) continue;
+    break;
   }
 
   if (!last.ok) {
     const error = new HttpError(502, `AI 服务返回错误（HTTP ${last.status}）。`, 'AI_UPSTREAM');
     error.upstream = upstreamMessage(last.text);
+    // 把试过的模型名列出来：排障时「到底是没配额还是模型名写错了」一眼可辨。
+    error.modelsTried = tried;
     throw error;
+  }
+
+  // 调用方（分类 / 抽象）据此如实回传「这次是谁答的」，而不是回传配置里的主模型名。
+  if (options.trace && typeof options.trace === 'object') {
+    options.trace.model = last.model;
+    options.trace.modelsTried = tried;
   }
 
   let parsed;
@@ -1622,7 +1710,13 @@ const CATEGORY_RULES = [
   },
   {
     category: 'life',
-    words: ['生活', '通勤', '做饭', '睡眠', '健身', '家务', '收纳', '记账', '孩子', '家人', '打扫', '宠物', '买菜', '健康', '情绪'],
+    words: [
+      '生活', '通勤', '做饭', '睡眠', '健身', '家务', '收纳', '记账', '孩子', '家人', '打扫',
+      '宠物', '买菜', '健康', '情绪',
+      // 日常摩擦类：开会记不住谁记录、出门总忘带东西、排队等太久这类「自己生活里的小口子」，
+      // 是最容易被误判成 App 创意的一类。它们本身不是产品，先归到生活问题。
+      '会议', '纪要', '忘记', '忘带', '记不住', '排队', '等位', '迟到', '琐事', '提醒',
+    ],
   },
 ];
 
@@ -1639,6 +1733,27 @@ export function classifyByRules(text) {
   }
   return best.category;
 }
+
+/**
+ * 分类用的系统提示词。
+ *
+ * 这里把「日常摩擦」单独点名，是因为实测中模型最容易错的就是这一类：
+ * 「每次开会都忘记谁负责记会议纪要」看起来像个工具需求，但用户想记下的其实是
+ * 生活里的小麻烦。先归到生活问题，用户想做成产品时自己会再改分类。
+ */
+const CLASSIFY_PROMPT =
+  '你是念头分类助手。把用户的想法归到且仅归到以下五类之一，只输出 JSON：' +
+  '{"category":"life|app|skill|web|other"}。' +
+  '分类定义：' +
+  'life=生活问题，指日常生活里的麻烦、摩擦与感受' +
+  '（例如记不住事、忘带东西、排队太慢、通勤太久、家里太乱、作息乱）；' +
+  'app=App/产品创意，指明确想做一个给用户用的产品、功能或界面；' +
+  'skill=Skill/自动化，指想让机器替自己自动完成某个流程、脚本或工作流；' +
+  'web=网站/小程序，指网站、网页、小程序、官网或后台系统；' +
+  'other=其他，无法归入以上四类的。' +
+  '判断顺序：先看用户是不是在描述「自己生活里的麻烦」（那就是 life），' +
+  '再看有没有明确要做的东西。同一句话里既有生活场景又有产品设想时，以「想做什么」为准。' +
+  '不要解释，不要输出多余字段。';
 
 async function handleClassify(request, env) {
   const user = await authenticate(request, env);
@@ -1657,19 +1772,14 @@ async function handleClassify(request, env) {
   }
 
   try {
+    const trace = {};
     const raw = await callChat(
       env,
       [
-        {
-          role: 'system',
-          content:
-            '你是念头分类助手。把用户的想法归到且仅归到以下五类之一，只输出 JSON：' +
-            '{"category":"life|app|skill|web|other"}。' +
-            'life=生活问题，app=App/产品创意，skill=Skill/自动化，web=网站/小程序，other=其他。不要解释。',
-        },
+        { role: 'system', content: CLASSIFY_PROMPT },
         { role: 'user', content: content.slice(0, 2000) },
       ],
-      { json: true, maxTokens: 60, temperature: 0 },
+      { json: true, maxTokens: 60, temperature: 0, trace },
     );
     // 模型不一定老实只吐 JSON（可能带围栏、带一句话），先宽松解析，再退到关键词。
     const parsed = parseJsonLoose(raw);
@@ -1685,6 +1795,8 @@ async function handleClassify(request, env) {
       category: finalCategory,
       label: CATEGORY_LABELS[finalCategory],
       source: category ? 'ai' : 'rules',
+      // 实际作答的模型名：配了 glm-5.3 但额度不足时，这里会是兜底模型的名字。
+      model: trace.model || '',
     });
   } catch (error) {
     await logService(env, user.id, 'classify', false, errorDetail(error));
@@ -1935,10 +2047,21 @@ async function handlePoster(request, env) {
     .join('\n')
     .slice(0, MAX_IMAGE_PROMPT_CHARS);
 
-  const image = await generateImage(env, cfg, { prompt, aspect });
+  const trace = {};
+  const image = await generateImage(env, cfg, { prompt, aspect, trace });
   if (!image.ok) {
     await logService(env, user.id, 'poster', false, image.detail);
-    return json({ configured: true, generated: false, error: image.error, ...debugExtra(env, { upstream: image.detail }) }, 502);
+    return json(
+      {
+        configured: true,
+        generated: false,
+        error: image.error,
+        // 试过哪些模型也一并回传：出图失败时「是没额度还是模型名错了」一眼可辨。
+        modelsTried: image.modelsTried || [],
+        ...debugExtra(env, { upstream: image.detail }),
+      },
+      502,
+    );
   }
 
   await logService(env, user.id, 'poster', true, style);
@@ -1948,6 +2071,9 @@ async function handlePoster(request, env) {
     style,
     aspect,
     provider: capabilities(env).imageProvider,
+    // 实际出图的模型名：配了 cogview-4 但额度不足时，这里会是兜底模型的名字。
+    model: trace.model || '',
+    modelsTried: trace.modelsTried || [],
     // 统一回传 data: URL：服务商给的临时链接会过期，而且跨域取回来做下载/分享会被浏览器拦。
     base64: image.dataUrl,
     url: image.remoteUrl,
@@ -1984,14 +2110,14 @@ async function imageQuota(env, userId) {
  *   1. 尺寸按服务商映射（智谱不认 1024x1365）；
  *   2. 智谱只给一个临时 URL，OpenAI 给 base64 —— 统一在服务端落成 data: URL 再回前端，
  *      这样「下载」和「系统分享」在 iOS / 微信里都能正常工作。
+ *   3. 主图像模型额度不足时按 IMAGE_FALLBACK_MODELS 依次退让，绝不因为「充值没到位」
+ *      就让「生成海报」整个功能躺平。
  */
-async function generateImage(env, cfg, { prompt, aspect }) {
+async function generateImage(env, cfg, { prompt, aspect, trace }) {
   const size = posterSizeFor(cfg.provider, aspect);
-  const full = { model: cfg.model, prompt, size, n: 1 };
-  const shapes =
-    cfg.provider === 'zhipu'
-      ? [{ ...full, watermark_enabled: false }, full, { model: cfg.model, prompt }]
-      : [{ ...full, response_format: 'b64_json' }, full];
+  // 和文本模型一样按「链」试：主图像模型额度不足时自动退到兜底模型，
+  // 充值后不必改代码就能用上更好的那档（cogview-4 → cogview-3-flash）。
+  const models = cfg.models && cfg.models.length > 0 ? cfg.models : [cfg.model];
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
@@ -1999,27 +2125,49 @@ async function generateImage(env, cfg, { prompt, aspect }) {
     let text = '';
     let ok = false;
     let status = 0;
-    for (let i = 0; i < shapes.length; i += 1) {
-      const res = await fetch(`${cfg.baseUrl}/images/generations`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
-        body: JSON.stringify(shapes[i]),
-        signal: controller.signal,
-      });
-      status = res.status;
-      ok = res.ok;
-      text = await res.text();
+    let model = models[0];
+    const tried = [];
+    for (let m = 0; m < models.length; m += 1) {
+      model = models[m];
+      tried.push(model);
+      const full = { model, prompt, size, n: 1 };
+      const shapes =
+        cfg.provider === 'zhipu'
+          ? [{ ...full, watermark_enabled: false }, full, { model, prompt }]
+          : [{ ...full, response_format: 'b64_json' }, full];
+
+      for (let i = 0; i < shapes.length; i += 1) {
+        const res = await fetch(`${cfg.baseUrl}/images/generations`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+          body: JSON.stringify(shapes[i]),
+          signal: controller.signal,
+        });
+        status = res.status;
+        ok = res.ok;
+        text = await res.text();
+        if (ok) break;
+        // 只对「参数不被支持」退让；鉴权、余额、限流这类错误重试没有意义。
+        const canRetry = i < shapes.length - 1 && status === 400;
+        if (!canRetry) break;
+      }
       if (ok) break;
-      // 只对「参数不被支持」退让；鉴权、余额、限流这类错误重试没有意义。
-      const canRetry = i < shapes.length - 1 && status === 400;
-      if (!canRetry) break;
+      // 额度不足 / 限流 / 模型名不被认 —— 才值得换下一个模型再试一次。
+      if (m < models.length - 1 && shouldTryNextModel(status, text)) continue;
+      break;
     }
     if (!ok) {
       return {
         ok: false,
         error: `图像服务返回错误（HTTP ${status}）。`,
         detail: `http-${status} ${upstreamMessage(text)}`.slice(0, 200),
+        modelsTried: tried,
       };
+    }
+    // 实际出图的模型名（可能不是配置里的主模型），调用方据此如实回显。
+    if (trace && typeof trace === 'object') {
+      trace.model = model;
+      trace.modelsTried = tried;
     }
 
     const parsed = parseJsonLoose(text);
@@ -2056,6 +2204,8 @@ async function generateImage(env, cfg, { prompt, aspect }) {
       // 已经是 data: 前缀就原样返回，前端两种写法都认。
       dataUrl: base64.startsWith('data:') ? base64 : `data:${mime};base64,${base64}`,
       remoteUrl,
+      model,
+      modelsTried: tried,
     };
   } catch (error) {
     const aborted = error && error.name === 'AbortError';
