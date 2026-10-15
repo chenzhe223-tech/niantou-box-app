@@ -14,6 +14,9 @@ export type Route =
   | { name: 'trash' }
   | { name: 'settings' }
   | { name: 'feedback' }
+  | { name: 'cloud' }
+  | { name: 'poster'; id: string }
+  | { name: 'posterTool' }
   | { name: 'dev' };
 
 export const paths = {
@@ -25,6 +28,9 @@ export const paths = {
   trash: '#/trash',
   settings: '#/settings',
   feedback: '#/feedback',
+  cloud: '#/cloud',
+  poster: (id: string) => `#/poster/${encodeURIComponent(id)}`,
+  posterTool: '#/poster',
   dev: '#/dev',
 } as const;
 
@@ -45,10 +51,17 @@ export function parseHash(hash: string): Route {
       return second ? { name: 'project', id: decodeURIComponent(second) } : { name: 'projects' };
     case 'idea':
       return second ? { name: 'idea', id: decodeURIComponent(second) } : { name: 'inbox' };
+    case 'poster':
+      // 带 ID 时针对某一条念头生成海报；不带 ID 时进入海报工具页（可从里面再选念头）。
+      return second
+        ? { name: 'poster', id: decodeURIComponent(second) }
+        : { name: 'posterTool' };
     case 'trash':
       return { name: 'trash' };
     case 'settings':
       return { name: 'settings' };
+    case 'cloud':
+      return { name: 'cloud' };
     case 'feedback':
       return { name: 'feedback' };
     case 'dev':
@@ -67,6 +80,10 @@ export function routeToHash(route: Route): string {
       return paths.inbox;
     case 'idea':
       return paths.idea(route.id);
+    case 'poster':
+      return paths.poster(route.id);
+    case 'posterTool':
+      return paths.posterTool;
     case 'projects':
       return paths.projects;
     case 'project':
@@ -75,6 +92,8 @@ export function routeToHash(route: Route): string {
       return paths.trash;
     case 'settings':
       return paths.settings;
+    case 'cloud':
+      return paths.cloud;
     case 'feedback':
       return paths.feedback;
     case 'dev':
