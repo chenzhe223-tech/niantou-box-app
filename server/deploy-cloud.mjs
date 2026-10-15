@@ -110,9 +110,13 @@ const SECRET_KEYS = [
   'AI_BASE_URL',
   'AI_API_KEY',
   'AI_MODEL',
+  // 主模型额度不足 / 被限流时依次退让的备用模型（逗号或空格分隔，越靠前越优先）。
+  // 放在这里是为了「配 glm-5.3 但账号没余额」不至于让整站 AI 变不可用。
+  'AI_FALLBACK_MODELS',
   'IMAGE_BASE_URL',
   'IMAGE_API_KEY',
   'IMAGE_MODEL',
+  'IMAGE_FALLBACK_MODELS',
   'MAIL_API_BASE',
   'MAIL_API_KEY',
   'MAIL_FROM',
