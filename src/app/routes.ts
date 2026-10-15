@@ -35,7 +35,9 @@ export const paths = {
 } as const;
 
 export function parseHash(hash: string): Route {
-  const cleaned = hash.replace(/^#/, '').replace(/^\/+/, '');
+  // Ignore transient query parameters embedded in hash routes, such as password-reset tokens.
+  const rawPath = hash.replace(/^#/, '').split('?')[0] ?? '';
+  const cleaned = rawPath.replace(/^\\/+/, '');
   const segments = cleaned.split('/').filter((segment) => segment !== '');
 
   if (segments.length === 0) return { name: 'home' };
