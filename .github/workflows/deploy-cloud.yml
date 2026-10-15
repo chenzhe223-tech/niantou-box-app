@@ -4,7 +4,9 @@
 #   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit + D1:Edit 权限的令牌
 #   NIANBOX_IP_SALT        （可选）登录限流用的盐，重复部署传同一个值即可
 #   AI_BASE_URL / AI_API_KEY / AI_MODEL                （可选）自动分类与隐私抽象
+#   AI_FALLBACK_MODELS                                 （可选）主模型额度不足时依次退让的模型
 #   IMAGE_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL       （可选）海报底图
+#   IMAGE_FALLBACK_MODELS                              （可选）主图像模型不可用时退让的模型
 #   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM           （可选）服务端发信
 #   MAIL_PROVIDER / MAIL_FROM_NAME                     （可选）发信形状与显示名，留空自动判断
 #   AI_PROVIDER_LABEL / IMAGE_PROVIDER_LABEL           （可选）界面上展示的「数据发给了谁」
@@ -52,10 +54,13 @@ jobs:
           AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
+          # 主模型额度不足时依次退让的备用模型（逗号分隔）。不填则只试主模型。
+          AI_FALLBACK_MODELS: ${{ secrets.AI_FALLBACK_MODELS }}
           AI_PROVIDER_LABEL: ${{ secrets.AI_PROVIDER_LABEL }}
           IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
           IMAGE_API_KEY: ${{ secrets.IMAGE_API_KEY }}
           IMAGE_MODEL: ${{ secrets.IMAGE_MODEL }}
+          IMAGE_FALLBACK_MODELS: ${{ secrets.IMAGE_FALLBACK_MODELS }}
           IMAGE_PROVIDER_LABEL: ${{ secrets.IMAGE_PROVIDER_LABEL }}
           MAIL_API_BASE: ${{ secrets.MAIL_API_BASE }}
           MAIL_API_KEY: ${{ secrets.MAIL_API_KEY }}
