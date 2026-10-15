@@ -234,6 +234,11 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
     if (sync.capabilities.classify && chain.length > 1) {
       parts.push(`文本模型链：${chain.join(' → ')}，前面的额度不足或被限流时自动退到下一个`);
     }
+    // 服务端填的运维注记（免费额度还剩多少、什么时候到期）原样带出来：
+    // 免费包用完时上游只会静默 429、链自动降级，界面不说就没人会发现。
+    if (sync.capabilities.aiNote) {
+      parts.push(`模型额度：${sync.capabilities.aiNote}`);
+    }
     parts.push(
       sync.capabilities.image
         ? `图像由 ${providerLabel(
