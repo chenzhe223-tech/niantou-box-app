@@ -43,6 +43,17 @@ export const EVENT_NAMES = [
   'feedback_opened',
   'feedback_submitted',
   'telemetry_changed',
+  // 云端同步
+  'cloud_signup',
+  'cloud_signin',
+  'cloud_signout',
+  'cloud_sync_result',
+  'cloud_migrated',
+  // AI 与流转
+  'ai_classify_used',
+  'ai_tool_opened',
+  'mail_handoff',
+  'poster_used',
 ] as const;
 
 export type AnalyticsEventName = (typeof EVENT_NAMES)[number];
@@ -59,6 +70,7 @@ const SOURCES = [
   'project_detail',
   'trash',
   'settings',
+  'cloud',
   'dev',
 ] as const;
 
@@ -80,8 +92,21 @@ const PROP_SCHEMA: Readonly<Record<string, readonly string[]>> = {
   progress: PROJECT_PROGRESSES.map((item) => item.value),
   bucket: ['1', '2-5', '6-20', '21-100', '100+'],
   kind: ['bug', 'suggestion', 'praise', 'other'],
-  result: ['ok', 'error', 'cancelled'],
+  /* 操作结果：ok / error / cancelled（用户取消）/ skipped（按规则跳过，例如已手动分类）。 */
+  result: ['ok', 'error', 'cancelled', 'skipped'],
   state: ['on', 'off'],
+  /* 云端同步结果：只上报「这台设备目前在什么状态」，不含账号、邮箱或条数。 */
+  sync: ['idle', 'pending', 'offline', 'error', 'unconfigured', 'signed-out'],
+  /* AI 分类来源：AI / 规则 / 用户手改。 */
+  via: ['ai', 'rules', 'manual', 'none'],
+  /* 交给哪个 AI 工具、用的是哪种任务模板。 */
+  tool: ['chatgpt', 'workbuddy', 'doubao', 'qwen', 'glm', 'custom'],
+  template: ['analyze', 'app', 'skill', 'website', 'feasibility', 'custom'],
+  /* 邮件到底发出去了没有：'mailto' = 只是预填，'server' = 服务端已发送。 */
+  channel: ['mailto', 'server'],
+  style: ['brand', 'dream', 'toy3d', 'minimal', 'journal', 'future'],
+  aspect: ['3:4', '1:1'],
+  render: ['ai', 'local'],
 };
 
 export type AnalyticsProps = Readonly<Record<string, unknown>>;
