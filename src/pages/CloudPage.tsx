@@ -24,6 +24,8 @@ import {
   cloudLogin,
   cloudLogout,
   cloudRegister,
+  completePasswordReset,
+  requestPasswordReset,
   fetchMe,
   type CloudMe,
 } from '../services/cloud/cloudAuth';
@@ -41,6 +43,13 @@ import {
   type SiteDraft,
 } from '../services/cloud/siteCapture';
 
+function readPasswordResetTokenFromHash(): string {
+  if (typeof window === 'undefined') return '';
+  const queryAt = window.location.hash.indexOf('?');
+  if (queryAt < 0) return '';
+  return new URLSearchParams(window.location.hash.slice(queryAt + 1)).get('reset')?.trim() ?? '';
+}
+
 function deviceName(label: string): string {
   return label.trim() || '未知设备';
 }
@@ -49,12 +58,16 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
   const sync = useCloudSync();
   const toast = useToast();
 
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [resetToken, setResetToken] = useState(() => readPasswordResetTokenFromHash());
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset'>(() => readPasswordResetTokenFromHash() ? 'reset' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [me, setMe] = useState<CloudMe | null>(null);
   const [migrating, setMigrating] = useState(false);
   // 官网在未登录时收下的那句话：会在登录后自动补交，这里同时给一个手动重试的入口。
@@ -86,6 +99,14 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
     setSiteDraft(readSiteDraft());
   }, [signedIn]);
 
+  useEffect(() => {
+    if (!resetToken || typeof window === 'undefined') return;
+    const queryAt = window.location.hash.indexOf('?');
+    if (queryAt >= 0 && new URLSearchParams(window.location.hash.slice(queryAt + 1)).has('reset')) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/cloud');
+    }
+  }, [resetToken]);
+
   const handleDeliverSiteDraft = async () => {
     if (delivering) return;
     setDelivering(true);
@@ -101,10 +122,12 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
     }
   };
 
-  const canSubmit = useMemo(
-    () => email.trim() !== '' && password.length >= 8 && !busy,
-    [email, password, busy],
-  );
+  const canSubmit = useMemo(() => {
+    if (busy) return false;
+    if (mode === 'forgot') return email.trim() !== '';
+    if (mode === 'reset') return Boolean(resetToken) && newPassword.length >= 8 && newPassword === confirmPassword;
+    return email.trim() !== '' && password.length >= 8;
+  }, [email, password, newPassword, confirmPassword, resetToken, busy, mode]);
 
   const handleSubmit = async () => {
     if (busy) return;
@@ -138,6 +161,33 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleRequestPasswordReset = async () => {
+    if (busy) return;
+    if (!email.trim()) { setError('请先填写注册时使用的邮箱。'); return; }
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await requestPasswordReset(email.trim());
+      setNotice(result.message || '如果该邮箱已注册且邮件服务可用，我们会发送重置链接。请检查收件箱和垃圾邮件。');
+    } catch (caught) {
+      setError(describeCloudError(caught));
+    } finally { setBusy(false); }
+  };
+
+  const handleCompletePasswordReset = async () => {
+    if (busy) return;
+    if (!resetToken) { setError('重置链接无效或已过期，请重新申请。'); return; }
+    if (newPassword.length < 8) { setError('新密码至少需要 8 位字符。'); return; }
+    if (newPassword !== confirmPassword) { setError('两次输入的新密码不一致。'); return; }
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await completePasswordReset(resetToken, newPassword);
+      setResetToken(''); setNewPassword(''); setConfirmPassword(''); setPassword(''); setMode('login');
+      setNotice('密码已重置，请使用新密码登录。为保护账号，其他设备需要重新登录。');
+      toast.push({ message: '密码已重置，请使用新密码登录。', tone: 'success' });
+    } catch (caught) { setError(describeCloudError(caught)); }
+    finally { setBusy(false); }
   };
 
   const handleLogout = async () => {
@@ -368,84 +418,56 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
         </>
       ) : (
         <section className="nb-section" aria-labelledby="nb-cloud-auth">
-          <div className="nb-section__head">
-            <h2 className="nb-section__title" id="nb-cloud-auth">
-              {mode === 'login' ? '登录' : '创建账号'}
-            </h2>
-          </div>
-          <form
-            className="nb-card nb-card--pad nb-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleSubmit();
-            }}
-            noValidate
-          >
-            <p className="nb-kv">
-              账号只用来区分「这是谁的数据」，因此只需要邮箱和密码，不要姓名、手机号。
-              登录后，念头会在这台设备与云端之间双向同步。
-            </p>
-
-            <TextField
-              label="邮箱"
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              value={email}
-              onChange={(value) => {
-                setEmail(value);
-                if (error) setError(null);
-              }}
-              placeholder="name@example.com"
-            />
-
-            {mode === 'register' ? (
-              <TextField
-                label="怎么称呼你（可选）"
-                value={displayName}
-                onChange={setDisplayName}
-                autoComplete="nickname"
-                placeholder="只用于显示"
-              />
-            ) : null}
-
-            <TextField
-              label="密码"
-              type="text"
-              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-              value={password}
-              onChange={(value) => {
-                setPassword(value);
-                if (error) setError(null);
-              }}
-              hint="至少 8 位。密码只用于登录，不会出现在任何链接或统计里。"
-            />
-
-            {error ? (
-              <p className="nb-notice nb-notice--danger" role="alert">
-                {error}
-              </p>
-            ) : null}
-
+          <div className="nb-section__head"><h2 className="nb-section__title" id="nb-cloud-auth">
+            {mode === 'login' ? '登录' : mode === 'register' ? '创建账号' : mode === 'forgot' ? '找回密码' : '设置新密码'}
+          </h2></div>
+          <form className="nb-card nb-card--pad nb-stack" onSubmit={(event) => {
+            event.preventDefault();
+            if (mode === 'forgot') void handleRequestPasswordReset();
+            else if (mode === 'reset') void handleCompletePasswordReset();
+            else void handleSubmit();
+          }} noValidate>
+            {mode === 'login' || mode === 'register' ? (
+              <p className="nb-kv">账号只用来区分「这是谁的数据」，只需要邮箱和密码。登录后，同一账号的数据可以在已登录设备间同步。</p>
+            ) : mode === 'forgot' ? (
+              <p className="nb-kv">输入注册时使用的邮箱。重置链接有效期为 30 分钟，且只能使用一次。</p>
+            ) : (
+              <p className="nb-kv">请设置至少 8 位的新密码。重置成功后，其他已登录设备需要重新登录。</p>
+            )}
+            {mode !== 'reset' ? <TextField label="邮箱" type="email" inputMode="email" autoComplete="email" value={email}
+              onChange={(value) => { setEmail(value); setError(null); setNotice(null); }} placeholder="name@example.com" /> : null}
+            {mode === 'register' ? <TextField label="怎么称呼你（可选）" value={displayName} onChange={setDisplayName} autoComplete="nickname" placeholder="只用于显示" /> : null}
+            {mode === 'login' || mode === 'register' ? <TextField label="密码" type="password"
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password}
+              onChange={(value) => { setPassword(value); setError(null); setNotice(null); }} hint="至少 8 位。" /> : null}
+            {mode === 'reset' ? <>
+              <TextField label="新密码" type="password" autoComplete="new-password" value={newPassword}
+                onChange={(value) => { setNewPassword(value); setError(null); }} hint="至少 8 位字符。" />
+              <TextField label="确认新密码" type="password" autoComplete="new-password" value={confirmPassword}
+                onChange={(value) => { setConfirmPassword(value); setError(null); }} />
+            </> : null}
+            {notice ? <p className="nb-notice" role="status">{notice}</p> : null}
+            {error ? <p className="nb-notice nb-notice--danger" role="alert">{error}</p> : null}
             <div className="nb-actionbar">
-              <Button type="submit" variant="primary" icon="check" disabled={!canSubmit}>
-                {busy ? '正在处理…' : mode === 'login' ? '登录并同步' : '创建账号'}
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  setMode(mode === 'login' ? 'register' : 'login');
-                  setError(null);
-                }}
-              >
-                {mode === 'login' ? '还没有账号？创建一个' : '已经有账号？去登录'}
-              </Button>
+              {mode === 'login' ? <>
+                <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在登录…' : '登录并同步'}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { setMode('register'); setError(null); setNotice(null); }}>还没有账号？创建一个</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { setMode('forgot'); setError(null); setNotice(null); }}>忘记密码？</Button>
+              </> : mode === 'register' ? <>
+                <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在创建…' : '创建账号'}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { setMode('login'); setError(null); setNotice(null); }}>已有账号？返回登录</Button>
+              </> : mode === 'forgot' ? <>
+                <Button type="submit" variant="primary" icon="mail" disabled={!canSubmit || busy}>{busy ? '正在发送…' : '发送重置链接'}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { setMode('login'); setError(null); setNotice(null); }}>返回登录</Button>
+              </> : <>
+                <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在重置…' : '重置密码'}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { setMode('login'); setError(null); setNotice(null); }}>返回登录</Button>
+              </>}
             </div>
           </form>
         </section>
       )}
-
+ 
       <section className="nb-section" aria-labelledby="nb-cloud-services">
         <div className="nb-section__head">
           <h2 className="nb-section__title" id="nb-cloud-services">
