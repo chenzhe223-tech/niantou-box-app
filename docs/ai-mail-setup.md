@@ -100,15 +100,32 @@ $env:IMAGE_MODEL = "cogview-4-250304"
 
 ## 四、接入邮件服务与「找回密码」
 
-只支持「一个 HTTP 接口 + 一个 API Key」的发信服务，不需要 SMTP。三种形状自动识别：
+只支持「一个 HTTP 接口 + 一个 API Key」的发信服务，不需要 SMTP。四种形状自动识别：
 
 | `MAIL_PROVIDER` | 适用服务 | 请求形状 |
 | --- | --- | --- |
 | `resend`（默认） | Resend | `POST {MAIL_API_BASE}/emails`，`Authorization: Bearer` |
 | `sendgrid` | SendGrid | `POST {MAIL_API_BASE}/v3/mail/send` |
 | `mailgun` | Mailgun | `POST {MAIL_API_BASE}/v3/{domain}/messages`，表单编码 |
+| `brevo` | Brevo（原 Sendinblue） | `POST {MAIL_API_BASE}/v3/smtp/email`，`api-key` 头 |
 
-以 **Resend** 为例（对个人开发者最省事，有免费额度）：
+### 没有自己的域名？先用 Brevo
+
+Resend 和 SendGrid 都必须先验证**自有域名**才能给任意收件人发信；**Brevo 只要求验证一个发件邮箱**（单发件人认证，免费额度每天 300 封），是还没买域名时唯一能在十分钟内真正点亮「找回密码」的选项。
+
+1. 注册 <https://www.brevo.com>；
+2. Senders & IP → Senders → 添加并**点邮件里的链接完成验证**一个发件邮箱；
+3. SMTP & API → API Keys → 新建一枚 key；
+4. 写入下面三个变量：
+
+| 变量 | 值 |
+| --- | --- |
+| `MAIL_API_BASE` | `https://api.brevo.com` |
+| `MAIL_API_KEY` | Brevo 的 API Key |
+| `MAIL_FROM` | 你刚验证过的那个邮箱地址 |
+| `MAIL_PROVIDER` | 可留空（看到 `brevo` 域名会自动用 brevo 形状） |
+
+### 有自己的域名：推荐 Resend（对个人开发者最省事，有免费额度）
 
 1. 注册 <https://resend.com> 并创建一个 API Key。
 2. 在 Resend 里添加并**验证**一个发信域名（DNS 里加几条记录）。用未验证的域名发信会被上游拒绝。
@@ -120,6 +137,8 @@ $env:IMAGE_MODEL = "cogview-4-250304"
 | `MAIL_API_KEY` | Resend 的 API Key |
 | `MAIL_FROM` | `NianBox <no-reply@你的已验证域名>` |
 | `MAIL_PROVIDER` | 留空自动判断（识别到 resend 就用 resend 形状） |
+
+> `MAIL_FROM` 可以写成 `显示名 <地址>` 的形式；也可以把它只写成地址、另外用 `MAIL_FROM_NAME` 指定显示名，两者等价。
 
 配好之后：
 
@@ -158,6 +177,7 @@ node server/deploy-cloud.mjs
 AI_API_KEY / AI_MODEL / AI_BASE_URL / AI_PROVIDER_LABEL
 IMAGE_API_KEY / IMAGE_MODEL / IMAGE_BASE_URL / IMAGE_PROVIDER_LABEL
 MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM
+MAIL_PROVIDER / MAIL_FROM_NAME   （可选）
 ```
 
 之后每次改动 `server/**` 推送到 `main`，`.github/workflows/deploy-cloud.yml` 会自动重新部署并带上这些密钥。
