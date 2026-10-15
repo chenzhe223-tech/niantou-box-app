@@ -44,7 +44,7 @@ export interface TextFieldProps {
   placeholder?: string;
   hint?: string;
   error?: string | null;
-  type?: 'text' | 'url' | 'search' | 'email';
+  type?: 'text' | 'url' | 'search' | 'email' | 'password';
   hideLabel?: boolean;
   inputMode?: 'text' | 'url' | 'search' | 'email';
   autoComplete?: string;
