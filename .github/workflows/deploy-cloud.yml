@@ -5,6 +5,7 @@
 #   NIANBOX_IP_SALT        （可选）登录限流用的盐，重复部署传同一个值即可
 #   AI_BASE_URL / AI_API_KEY / AI_MODEL                （可选）自动分类与隐私抽象
 #   AI_FALLBACK_MODELS                                 （可选）主模型额度不足时依次退让的模型
+#   AI_NOTE                                            （可选）免费额度 / 到期时间，显示在设置页
 #   IMAGE_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL       （可选）海报底图
 #   IMAGE_FALLBACK_MODELS                              （可选）主图像模型不可用时退让的模型
 #   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM           （可选）服务端发信
@@ -56,6 +57,8 @@ jobs:
           AI_MODEL: ${{ secrets.AI_MODEL }}
           # 主模型额度不足时依次退让的备用模型（逗号分隔）。不填则只试主模型。
           AI_FALLBACK_MODELS: ${{ secrets.AI_FALLBACK_MODELS }}
+          # 免费额度 / 到期时间这类运维注记：会原样回显到 /capabilities.aiNote 与设置页。
+          AI_NOTE: ${{ secrets.AI_NOTE }}
           AI_PROVIDER_LABEL: ${{ secrets.AI_PROVIDER_LABEL }}
           IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
           IMAGE_API_KEY: ${{ secrets.IMAGE_API_KEY }}
