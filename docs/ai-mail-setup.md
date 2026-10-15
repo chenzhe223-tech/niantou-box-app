@@ -14,9 +14,9 @@
 
 | 能力 | 必需变量 | 可选变量 | 不配会怎样 |
 | --- | --- | --- | --- |
-| AI 自动分类 | `AI_API_KEY` | `AI_BASE_URL`、`AI_MODEL`、`AI_PROVIDER_LABEL` | 收件箱里显示「未接入文本模型」，分类回退到本地关键词规则 |
+| AI 自动分类 | `AI_API_KEY` | `AI_BASE_URL`、`AI_MODEL`、`AI_FALLBACK_MODELS`、`AI_PROVIDER_LABEL` | 收件箱里显示「未接入文本模型」，分类回退到本地关键词规则 |
 | 隐私抽象（海报第一步） | 复用 `AI_API_KEY` | 同上 | 海报的抽象步骤不可用，生成按钮会明说原因 |
-| AI 生图（海报底图） | 复用 `AI_API_KEY` | `IMAGE_BASE_URL`、`IMAGE_API_KEY`、`IMAGE_MODEL`、`IMAGE_PROVIDER_LABEL`、`AI_IMAGE_DAILY_LIMIT` | 海报只在本机绘制，不生成假的 AI 图片 |
+| AI 生图（海报底图） | 复用 `AI_API_KEY` | `IMAGE_BASE_URL`、`IMAGE_API_KEY`、`IMAGE_MODEL`、`IMAGE_FALLBACK_MODELS`、`IMAGE_PROVIDER_LABEL`、`AI_IMAGE_DAILY_LIMIT` | 海报只在本机绘制，不生成假的 AI 图片 |
 | 邮件发送（念头发邮件） | `MAIL_API_BASE`、`MAIL_API_KEY`、`MAIL_FROM` | `MAIL_PROVIDER`、`MAIL_FROM_NAME` | 退化为 `mailto:` 预填，由用户在自己的邮件应用里确认发送（界面会写明这不是「已发送」） |
 | 邮箱找回密码 | 同「邮件发送」 | | `POST /auth/password/forgot` 返回 `PASSWORD_RESET_NOT_CONFIGURED`，界面提示联系维护者 |
 
@@ -36,8 +36,28 @@
 
 ```powershell
 $env:AI_MODEL    = "glm-5.3"
-$env:IMAGE_MODEL = "cogview-4-250304"
+$env:IMAGE_MODEL = "cogview-4"
 ```
+
+### 模型退让链：配了 glm-5.3，也不会因为「还没充值」就整站不可用
+
+`AI_MODEL` 只是链上的**第一个**。上游用「额度不足 / 被限流 / 模型已经下线」拒绝时，
+服务端会自动退到下一个模型，而不是让「保存后自动分类」整个坏掉：
+
+| 变量 | 含义 | 线上当前值 |
+| --- | --- | --- |
+| `AI_MODEL` | 主文本模型 | `glm-5.3` |
+| `AI_FALLBACK_MODELS` | 备用文本模型（逗号 / 空格分隔，越靠前越优先） | `glm-4-flash` |
+| `IMAGE_MODEL` | 主图像模型 | `cogview-4` |
+| `IMAGE_FALLBACK_MODELS` | 备用图像模型 | `cogview-3-flash` |
+
+- 链尾会自动补上免费档模型（`glm-4-flash` / `cogview-3-flash`），并且**自动去重**；
+  所以只写 `AI_MODEL=glm-5.3` 也是安全的。
+- 鉴权失败（401 / 403）**不会**换模型重试 —— 换一个也一样失败，只会把真问题藏起来。
+  参数写错（400 且与模型名无关）同理，如实抛错更好查。
+- `GET /capabilities` 会回显整条链（`aiModels` / `imageModels`），分类与生图的响应里还会带上
+  **实际作答 / 实际出图**的模型名（`model` 字段）：配的是 5.3、跑的是 flash，一眼看得见。
+- 因此**充值当天不需要改任何配置**：账号一有余额，下一次调用就直接落在 `glm-5.3` 上。
 
 > 免费档的 CogView 会在图片右下角打「AI 生成」水印。海报在返回前端后会统一裁掉底部一小条、
 > 补上品牌紫页脚（星形 + 「念头盒 NianBox」），所以分享出去的海报是干净的、品牌一致的。
@@ -124,6 +144,52 @@ Resend 和 SendGrid 都必须先验证**自有域名**才能给任意收件人�
 | `MAIL_API_KEY` | Brevo 的 API Key |
 | `MAIL_FROM` | 你刚验证过的那个邮箱地址 |
 | `MAIL_PROVIDER` | 可留空（看到 `brevo` 域名会自动用 brevo 形状） |
+
+### 既没有域名、也收不到国际短信？用自建中转（信从你自己的邮箱发出）
+
+`MAIL_PROVIDER` 留空、或者填一个不认识的值时，服务端按**最朴素的形状**发信：
+
+```
+POST {MAIL_API_BASE}
+Authorization: Bearer {MAIL_API_KEY}
+{"from":"显示名 <地址>","to":["收件人"],"subject":"...","text":"..."}
+```
+
+任何能收下这个 JSON 的 HTTPS 端点都能当邮件后端，包括一个挂在你自己 Google 账号下的 Apps Script：
+
+1. 打开 <https://script.google.com> → 新建项目 → 把下面的脚本贴进去；
+2. 把脚本里的 `SECRET` 改成一串你自己的随机字符串（这是防止别人拿这个网址发信的共享口令）；
+3. 「部署」→ 新建部署 → 类型选「Web 应用」→ 执行身份「我」→ 访问权限「任何人」→ 部署，
+   复制拿到的 `/exec` 网址；
+4. 写入这四个变量：
+
+| 变量 | 值 |
+| --- | --- |
+| `MAIL_API_BASE` | `<那个 /exec 网址>?secret=<你写的 SECRET>` |
+| `MAIL_API_KEY` | 随便填一个非空值（形状需要它非空，Apps Script 不校验） |
+| `MAIL_FROM` | 你的 Gmail 地址 |
+| `MAIL_PROVIDER` | 留空 |
+
+```javascript
+// Google Apps Script：把 NianBox 发来的 JSON 用你自己的 Gmail 发出去。
+const SECRET = '换成你自己的随机字符串';
+
+function doPost(e) {
+  if (e.parameter.secret !== SECRET) throw new Error('forbidden');
+  const body = JSON.parse(e.postData.contents);
+  MailApp.sendEmail(body.to, body.subject, body.text, {
+    from: body.from,
+    name: 'NianBox',
+    replyTo: body.from,
+  });
+  return ContentService.createTextOutput(JSON.stringify({ id: 'apps-script' })).setMimeType(
+    ContentService.MimeType.JSON,
+  );
+}
+```
+
+> 这条路同样是「上游真的成功才算已发送」，只是上游换成了 Google；免费 Gmail 账号大约每天 100 封。
+> 以后买了域名，只要把这四个变量换成 Resend 的三个值，**代码一行都不用改**。
 
 ### 有自己的域名：推荐 Resend（对个人开发者最省事，有免费额度）
 
