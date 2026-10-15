@@ -12,6 +12,8 @@ import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
 import { ToastProvider } from './components/Toast';
 import { useHashRoute } from './hooks/useHashRoute';
+import { useCategoryBackfill } from './hooks/useCategoryBackfill';
+import { useCloudSync } from './hooks/useCloudSync';
 import { DeveloperPage } from './pages/DeveloperPage';
 import { CloudPage } from './pages/CloudPage';
 import { FeedbackPage } from './pages/FeedbackPage';
@@ -99,8 +101,12 @@ function RouteView({ route, navigate }: { route: Route; navigate: (hash: string)
 }
 
 function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => void }) {
-  const { status, error, reload } = useAppData();
+  const { status, error, reload, ideas } = useAppData();
+  const cloud = useCloudSync();
   const current = activeTab(route);
+
+  // 登录之后，把迁移上来 / 官网快速记录进来的「未分类」念头补上分类。
+  useCategoryBackfill(ideas, cloud.signedIn);
 
   return (
     <div className="nb-app">
