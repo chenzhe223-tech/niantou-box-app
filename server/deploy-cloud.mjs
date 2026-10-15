@@ -116,7 +116,7 @@ const SECRET_KEYS = [
   'MAIL_API_KEY',
   'MAIL_FROM',
 ];
-const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL'];
+const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'PUBLIC_APP_URL'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
 const DEBUG_DETAIL = (process.env.NIANBOX_DEBUG_DETAIL || '').trim();
 
@@ -162,11 +162,11 @@ async function main() {
     await cf('POST', `/accounts/${accountId}/d1/database/${dbId}/query`, { sql });
   }
   const check = await cf('POST', `/accounts/${accountId}/d1/database/${dbId}/query`, {
-    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','ideas','projects','user_state','meta')",
+    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','ideas','projects','user_state','meta','password_reset_tokens')",
   });
   const tables = (check?.[0]?.results || []).map((r) => r.name).sort();
   console.log('3. 建表完成，现有表：', tables.join(', ') || '(空)');
-  for (const required of ['users', 'sessions', 'ideas', 'projects']) {
+  for (const required of ['users', 'sessions', 'ideas', 'projects', 'password_reset_tokens']) {
     if (!tables.includes(required)) throw new Error(`建表没有生效：缺少 ${required}`);
   }
 
