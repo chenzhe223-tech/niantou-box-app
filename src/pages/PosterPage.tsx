@@ -26,6 +26,7 @@ import {
   POSTER_ASPECTS,
   POSTER_STYLES,
   abstractionInput,
+  applyBrandFooter,
   downloadPoster,
   getPosterStyle,
   renderLocalPoster,
@@ -143,7 +144,10 @@ export function PosterPage({
           original: target.content,
         });
         if (generated) {
-          setPoster(generated);
+          // 图像模型给的图不一定干净（免费档会在右下角打水印），
+          // 统一裁掉底部一小条并补上品牌页脚 —— 六种风格的海报收尾一致。
+          const branded = await applyBrandFooter(generated.dataUrl, nextAspect);
+          setPoster(branded ? { ...generated, dataUrl: branded } : generated);
           setPhase('ready');
           track('poster_used', {
             source: entrySource,
@@ -537,7 +541,7 @@ export function PosterPage({
                 </div>
                 <p className="nb-kv">
                   {poster.render === 'ai'
-                    ? '这张图由图像模型根据抽象结果生成，提示词里只有主题、情绪与视觉元素，没有念头原文。'
+                    ? '这张图由图像模型根据抽象结果生成，提示词里只有主题、情绪与视觉元素，没有念头原文。底部的品牌页脚由念头盒叠加，用来盖住服务商水印。'
                     : '服务端没有配置图像生成服务，所以这张图是在这台设备上用品牌模板绘制的，不是 AI 生成的图片。'}
                 </p>
                 {poster.render === 'ai' && poster.promptPreview ? (
