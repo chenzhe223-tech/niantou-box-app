@@ -199,6 +199,12 @@
         cursor: progress;
       }
 
+      .btn--sm {
+        min-height: 32px;
+        padding: 0 12px;
+        font-size: 13px;
+      }
+
       .hint {
         color: var(--nb-text-muted);
         font-size: 13px;
@@ -456,6 +462,121 @@
           接口约定：<code>GET {地址}/report?days=30</code>，请求头
           <code>Authorization: Bearer &lt;读取令牌&gt;</code>。返回结构见交付文档《运营数据与用户反馈-接入指南》。
         </p>
+      </div>
+
+      <div class="card" id="recovery">
+        <h2>账号找回（不依赖邮件）</h2>
+        <p class="hint" style="margin-top: 6px">
+          邮件通道还没配好时，用这里的<strong>运维令牌</strong>直接给账号签发一次性重置链接，
+          再通过微信 / 短信 / 当面把链接交给本人。它和上面的「读取令牌」不是同一个值，
+          对应 Worker 上的 <code>ADMIN_TOKEN</code>。没配置时这一块会明确报错，不会假装成功。
+        </p>
+        <form id="adminForm">
+          <div class="row" style="margin-top: 14px">
+            <div class="field">
+              <label for="cloudEndpoint">应用后端地址（云同步 Worker，可与上面是同一个）</label>
+              <input
+                id="cloudEndpoint"
+                type="url"
+                inputmode="url"
+                placeholder="https://nianbox-cloud.example.workers.dev"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+            </div>
+            <div class="field">
+              <label for="adminToken">运维令牌（ADMIN_TOKEN）</label>
+              <input
+                id="adminToken"
+                type="password"
+                placeholder="只有你自己知道，不要发给任何人"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+            </div>
+          </div>
+          <div class="row" style="margin-top: 14px">
+            <button class="btn btn--ghost" type="button" id="adminList">列出最近账号</button>
+            <button class="btn btn--ghost" type="button" id="adminForget">清除本页运维令牌</button>
+          </div>
+          <div class="row" style="margin-top: 14px">
+            <div class="field">
+              <label for="adminQuery">按邮箱或用户 ID 查找</label>
+              <input
+                id="adminQuery"
+                type="text"
+                placeholder="chenzhe223@gmail.com 或 u_xxxxxxxx"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field field--narrow">
+              <button class="btn" type="button" id="adminSearch" style="width: 100%">查找账号</button>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 14px">
+            <div class="field">
+              <label for="adminEmail">直接给某个邮箱签发重置链接</label>
+              <input
+                id="adminEmail"
+                type="email"
+                inputmode="email"
+                placeholder="账号邮箱"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field field--narrow">
+              <button class="btn" type="button" id="adminIssue" style="width: 100%">签发链接</button>
+            </div>
+          </div>
+        </form>
+        <p class="hint">
+          接口约定：<code>GET {地址}/admin/users?q=&lt;邮箱或 ID&gt;</code>、
+          <code>POST {地址}/admin/password-reset</code>，请求头
+          <code>Authorization: Bearer &lt;运维令牌&gt;</code>。链接 30 分钟内有效，且只能用一次。
+        </p>
+      </div>
+
+      <div id="adminStatus" class="msg hidden" role="status" aria-live="polite"></div>
+
+      <section id="adminResults" class="hidden">
+        <div class="card">
+          <h2>账号列表</h2>
+          <p class="hint" style="margin-top: 4px">
+            只回显邮箱、显示名、念头 / 项目数与最近同步时间；口令哈希与会话令牌不会出现在这里。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th class="num">念头</th>
+                <th class="num">项目</th>
+                <th>最近同步</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="adminUsersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="card hidden" id="linkCard">
+        <h2>一次性重置链接</h2>
+        <p class="hint" style="margin-top: 6px" id="linkMeta"></p>
+        <div class="row">
+          <div class="field">
+            <label for="resetLink">把它交给账号主人（微信 / 短信 / 当面），对方打开后即可设置新密码</label>
+            <input id="resetLink" type="text" readonly spellcheck="false" />
+          </div>
+          <div class="field field--narrow">
+            <button class="btn btn--ghost" type="button" id="copyLink" style="width: 100%">
+              复制链接
+            </button>
+          </div>
+        </div>
       </div>
 
       <div id="status" class="msg hidden" role="status" aria-live="polite"></div>
@@ -981,6 +1102,352 @@
             /* 忽略。 */
           }
         });
+
+        /* ------------------------------------------------------------------ */
+        /* 账号找回：运维令牌 + 一次性重置链接                                  */
+        /* ------------------------------------------------------------------ */
+
+        var ADMIN_TOKEN_KEY = 'nb.admin.cloud.token';
+        var CLOUD_ENDPOINT_KEY = 'nb.admin.cloud.endpoint';
+        // 只是省一次粘贴的默认值：这个地址本身写在应用里，不是秘密，运维令牌才是。
+        var DEFAULT_CLOUD_ENDPOINT = 'https://nianbox-cloud.chenzhe223.workers.dev';
+
+        var adminForm = document.getElementById('adminForm');
+        var cloudEndpointInput = document.getElementById('cloudEndpoint');
+        var adminTokenInput = document.getElementById('adminToken');
+        var adminQueryInput = document.getElementById('adminQuery');
+        var adminEmailInput = document.getElementById('adminEmail');
+        var adminListButton = document.getElementById('adminList');
+        var adminSearchButton = document.getElementById('adminSearch');
+        var adminIssueButton = document.getElementById('adminIssue');
+        var adminForgetButton = document.getElementById('adminForget');
+        var adminStatusBox = document.getElementById('adminStatus');
+        var adminResults = document.getElementById('adminResults');
+        var adminUsersBody = document.getElementById('adminUsersBody');
+        var linkCard = document.getElementById('linkCard');
+        var linkMeta = document.getElementById('linkMeta');
+        var resetLinkInput = document.getElementById('resetLink');
+        var copyLinkButton = document.getElementById('copyLink');
+
+        function showAdminStatus(kind, message) {
+          adminStatusBox.className = 'msg msg--' + kind;
+          adminStatusBox.textContent = message;
+        }
+
+        function hideAdminStatus() {
+          adminStatusBox.className = 'msg hidden';
+          adminStatusBox.textContent = '';
+        }
+
+        function readAdminConfig() {
+          var base = normalizeBase(cloudEndpointInput.value);
+          var token = text(adminTokenInput.value).trim();
+          if (!base) {
+            showAdminStatus('error', '应用后端地址必须是 http:// 或 https:// 开头的完整地址。');
+            return null;
+          }
+          if (!token) {
+            showAdminStatus('error', '请填入运维令牌（ADMIN_TOKEN）。');
+            return null;
+          }
+          return { base: base, token: token };
+        }
+
+        /**
+         * 503 走的是「后端没配 ADMIN_TOKEN」这条分支。它必须和「令牌错了」区分开，
+         * 否则用户会以为是令牌打错了，反复重试一个根本没开的后端。
+         */
+        function parseAdminError(status, body) {
+          var code = body && typeof body.code === 'string' ? body.code : '';
+          if (code === 'ADMIN_TOKEN_NOT_CONFIGURED') {
+            return '这个后端还没有配置 ADMIN_TOKEN，账号找回整体不可用。去 Worker 的环境变量里加上再试。';
+          }
+          if (status === 401) return '请填入运维令牌。';
+          if (status === 403) return '运维令牌不正确。';
+          if (status === 404) return '没有找到这个账号。';
+          if (status === 400) return '邮箱格式不对，或者没提供邮箱 / 用户 ID。';
+          if (status >= 500) return '后端出错了（HTTP ' + status + '），去 Worker 日志里看一眼。';
+          if (body && typeof body.error === 'string' && body.error) return body.error;
+          return '请求失败（HTTP ' + status + '）。';
+        }
+
+        function adminRequest(config, path, options) {
+          var settings = options || {};
+          var controller = new AbortController();
+          var timer = setTimeout(function () {
+            controller.abort();
+          }, 15000);
+          var headers = { Authorization: 'Bearer ' + config.token, Accept: 'application/json' };
+          if (settings.body) headers['Content-Type'] = 'application/json';
+
+          return fetch(config.base + path, {
+            method: settings.method || 'GET',
+            headers: headers,
+            body: settings.body ? JSON.stringify(settings.body) : undefined,
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
+            cache: 'no-store',
+            signal: controller.signal
+          })
+            .then(function (response) {
+              return response
+                .json()
+                .catch(function () {
+                  return null;
+                })
+                .then(function (body) {
+                  if (!response.ok) throw new Error(parseAdminError(response.status, body));
+                  // 只有真的通了才记令牌：填错了不会把错值留在会话里。
+                  if (STORE) {
+                    try {
+                      STORE.setItem(ADMIN_TOKEN_KEY, config.token);
+                    } catch (error) {
+                      /* 隐私模式下写不进去也不影响使用。 */
+                    }
+                  }
+                  try {
+                    window.localStorage.setItem(CLOUD_ENDPOINT_KEY, config.base);
+                  } catch (error) {
+                    /* 忽略。 */
+                  }
+                  return body || {};
+                });
+            })
+            .catch(function (error) {
+              if (error && error.name === 'AbortError') {
+                throw new Error('请求超时，检查一下后端地址是否可访问。');
+              }
+              throw error;
+            })
+            .finally(function () {
+              clearTimeout(timer);
+            });
+        }
+
+        function renderAdminUsers(users) {
+          adminUsersBody.textContent = '';
+          if (users.length === 0) {
+            var empty = document.createElement('tr');
+            var cell = document.createElement('td');
+            cell.colSpan = 5;
+            cell.textContent = '没有找到匹配的账号。';
+            empty.appendChild(cell);
+            adminUsersBody.appendChild(empty);
+          } else {
+            users.forEach(function (user) {
+              var tr = document.createElement('tr');
+
+              var who = document.createElement('td');
+              var email = document.createElement('span');
+              email.textContent = text(user.email) || '（无邮箱）';
+              who.appendChild(email);
+              var detail = document.createElement('div');
+              detail.className = 'hint';
+              detail.style.margin = '2px 0 0';
+              detail.textContent = text(user.id) + (user.displayName ? ' · ' + user.displayName : '');
+              who.appendChild(detail);
+              tr.appendChild(who);
+
+              var ideas = document.createElement('td');
+              ideas.className = 'num';
+              ideas.textContent = text(number(user.ideaCount));
+              tr.appendChild(ideas);
+
+              var projects = document.createElement('td');
+              projects.className = 'num';
+              projects.textContent = text(number(user.projectCount));
+              tr.appendChild(projects);
+
+              var sync = document.createElement('td');
+              sync.textContent = formatTime(user.lastSyncAt) || '还没同步过';
+              tr.appendChild(sync);
+
+              var actions = document.createElement('td');
+              var issue = document.createElement('button');
+              issue.type = 'button';
+              issue.className = 'btn btn--ghost btn--sm';
+              issue.textContent = '签发重置链接';
+              issue.addEventListener('click', function () {
+                issueReset({ userId: user.id }, issue);
+              });
+              actions.appendChild(issue);
+              tr.appendChild(actions);
+
+              adminUsersBody.appendChild(tr);
+            });
+          }
+          adminResults.className = '';
+        }
+
+        function showResetLink(result) {
+          resetLinkInput.value = text(result.resetUrl);
+          linkMeta.textContent =
+            '账号 ' +
+            (text(result.email) || text(result.userId)) +
+            ' · 有效期至 ' +
+            formatTime(result.expiresAt) +
+            '（30 分钟内有效，且只能用一次）';
+          linkCard.className = 'card';
+          try {
+            resetLinkInput.focus();
+            resetLinkInput.select();
+            resetLinkInput.setSelectionRange(0, resetLinkInput.value.length);
+          } catch (error) {
+            /* 选中失败不影响展示。 */
+          }
+        }
+
+        function issueReset(payload, sourceButton) {
+          var config = readAdminConfig();
+          if (!config) return;
+          hideAdminStatus();
+
+          var button = sourceButton || adminIssueButton;
+          var original = button.textContent;
+          button.disabled = true;
+          button.textContent = '签发中…';
+
+          adminRequest(config, '/admin/password-reset', { method: 'POST', body: payload })
+            .then(function (result) {
+              showResetLink(result);
+              showAdminStatus('ok', '已签发一次性重置链接，请通过微信 / 短信 / 当面交给账号主人。');
+            })
+            .catch(function (error) {
+              showAdminStatus('error', error && error.message ? error.message : '签发失败。');
+            })
+            .finally(function () {
+              button.disabled = false;
+              button.textContent = original;
+            });
+        }
+
+        function loadAdminUsers(query) {
+          var config = readAdminConfig();
+          if (!config) return;
+          hideAdminStatus();
+          adminListButton.disabled = true;
+          adminSearchButton.disabled = true;
+
+          var path = '/admin/users';
+          if (query) path += '?q=' + encodeURIComponent(query);
+
+          adminRequest(config, path)
+            .then(function (result) {
+              var users = Array.isArray(result.users) ? result.users : [];
+              renderAdminUsers(users);
+              showAdminStatus(
+                'ok',
+                query
+                  ? '找到 ' + users.length + ' 个匹配账号。'
+                  : '已读取最近 ' + users.length + ' 个账号。'
+              );
+            })
+            .catch(function (error) {
+              showAdminStatus('error', error && error.message ? error.message : '读取账号失败。');
+            })
+            .finally(function () {
+              adminListButton.disabled = false;
+              adminSearchButton.disabled = false;
+            });
+        }
+
+        adminForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+        });
+
+        adminListButton.addEventListener('click', function () {
+          loadAdminUsers('');
+        });
+
+        adminSearchButton.addEventListener('click', function () {
+          loadAdminUsers(text(adminQueryInput.value).trim());
+        });
+
+        adminQueryInput.addEventListener('keydown', function (event) {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          loadAdminUsers(text(adminQueryInput.value).trim());
+        });
+
+        adminIssueButton.addEventListener('click', function () {
+          var email = text(adminEmailInput.value).trim();
+          if (!email) {
+            showAdminStatus('error', '请先填入账号邮箱。');
+            return;
+          }
+          issueReset({ email: email });
+        });
+
+        adminEmailInput.addEventListener('keydown', function (event) {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          adminIssueButton.click();
+        });
+
+        adminForgetButton.addEventListener('click', function () {
+          adminTokenInput.value = '';
+          if (STORE) {
+            try {
+              STORE.removeItem(ADMIN_TOKEN_KEY);
+            } catch (error) {
+              /* 忽略。 */
+            }
+          }
+          adminResults.className = 'hidden';
+          linkCard.className = 'card hidden';
+          resetLinkInput.value = '';
+          hideAdminStatus();
+        });
+
+        copyLinkButton.addEventListener('click', function () {
+          var value = resetLinkInput.value;
+          if (!value) return;
+
+          var confirmCopied = function () {
+            copyLinkButton.textContent = '已复制';
+            setTimeout(function () {
+              copyLinkButton.textContent = '复制链接';
+            }, 1600);
+          };
+
+          // 微信内置浏览器与部分 iOS 版本没有 navigator.clipboard，必须留退路。
+          var fallback = function () {
+            try {
+              resetLinkInput.focus();
+              resetLinkInput.select();
+              resetLinkInput.setSelectionRange(0, value.length);
+              if (document.execCommand('copy')) {
+                confirmCopied();
+                return;
+              }
+            } catch (error) {
+              /* 下面统一给提示。 */
+            }
+            showAdminStatus('warn', '这个浏览器不让自动复制。链接已选中，按 Ctrl / Cmd + C 复制。');
+          };
+
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(value).then(confirmCopied).catch(fallback);
+          } else {
+            fallback();
+          }
+        });
+
+        // 同样只回填，不发请求。
+        if (STORE) {
+          try {
+            var savedAdminToken = STORE.getItem(ADMIN_TOKEN_KEY);
+            if (savedAdminToken) adminTokenInput.value = savedAdminToken;
+          } catch (error) {
+            /* 忽略。 */
+          }
+        }
+        try {
+          var savedCloud = window.localStorage.getItem(CLOUD_ENDPOINT_KEY);
+          cloudEndpointInput.value = normalizeBase(savedCloud) || DEFAULT_CLOUD_ENDPOINT;
+        } catch (error) {
+          cloudEndpointInput.value = DEFAULT_CLOUD_ENDPOINT;
+        }
       })();
     </script>
   </body>
