@@ -96,6 +96,21 @@ describe('配置解析', () => {
     expect(cfg.model).toBe('glm-5.3');
   });
 
+  it('只填 AI_API_KEY、别的都不填，也按智谱默认值配好', () => {
+    const cfg = aiConfig({ AI_API_KEY: 'k' });
+    expect(cfg.provider).toBe('zhipu');
+    expect(cfg.baseUrl).toBe('https://open.bigmodel.cn/api/paas/v4');
+    expect(cfg.model).toBe('glm-5.3');
+    expect(cfg.ready).toBe(true);
+  });
+
+  it('给了别的地址就以地址为准，不会被默认智谱顶掉', () => {
+    const cfg = aiConfig({ AI_API_KEY: 'k', AI_BASE_URL: 'https://api.deepseek.com/v1' });
+    expect(cfg.provider).toBe('openai');
+    expect(cfg.baseUrl).toBe('https://api.deepseek.com/v1');
+    expect(cfg.ready).toBe(false);
+  });
+
   it('显式写的模型名不会被默认值覆盖', () => {
     expect(aiConfig({ AI_PROVIDER: 'zhipu', AI_API_KEY: 'k', AI_MODEL: 'glm-4.6' }).model).toBe('glm-4.6');
   });
@@ -109,6 +124,14 @@ describe('配置解析', () => {
     const cfg = imageConfig({ AI_PROVIDER: 'zhipu', AI_API_KEY: 'k' });
     expect(cfg.ready).toBe(true);
     expect(cfg.model).toBe('cogview-4-250304');
+  });
+
+  it('图像同样只靠一把 key 就配好（不填 IMAGE_* 也行）', () => {
+    const cfg = imageConfig({ AI_API_KEY: 'k' });
+    expect(cfg.provider).toBe('zhipu');
+    expect(cfg.baseUrl).toBe('https://open.bigmodel.cn/api/paas/v4');
+    expect(cfg.model).toBe('cogview-4-250304');
+    expect(cfg.ready).toBe(true);
   });
 
   it('OpenAI 形状没有默认模型名，必须显式配', () => {
@@ -152,6 +175,15 @@ describe('配置解析', () => {
     expect(withZhipu.aiProvider).toBe('智谱 GLM');
     expect(withZhipu.aiModel).toBe('glm-5.3');
     expect(withZhipu.mailProvider).toBe('resend');
+
+    // 「我只填了一把 GLM key」是最容易踩的配置方式，必须一次点亮分类与生图。
+    const onlyKey = capabilities({ AI_API_KEY: 'k' });
+    expect(onlyKey.classify).toBe(true);
+    expect(onlyKey.abstract).toBe(true);
+    expect(onlyKey.image).toBe(true);
+    expect(onlyKey.aiModel).toBe('glm-5.3');
+    expect(onlyKey.imageModel).toBe('cogview-4-250304');
+    expect(onlyKey.mail).toBe(false);
   });
 });
 
