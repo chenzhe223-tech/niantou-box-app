@@ -361,6 +361,23 @@ describe('邮件请求形状', () => {
     expect(resolveMailProvider('', 'https://api.mailgun.net/v3/x')).toBe('mailgun');
     expect(resolveMailProvider('', 'https://api.resend.com')).toBe('resend');
   });
+
+  // 自建中转（当前线上走的就是这条路：Google Apps Script 的 /exec）给的是一条
+  // 完整端点。若还按 Resend 形状拼 /emails，查询串里的 secret 会变成
+  // `xxx/emails`，中转端一律回 forbidden —— 这条测试把这个坑钉住。
+  it('自建中转：base url 自带查询串时原样使用，不再拼 /emails', () => {
+    const endpoint =
+      'https://script.google.com/macros/s/AKfycbxxx/exec?secret=nb_247a22bf43c4499df587b25ffaf0b862';
+    const request = buildMailRequest(
+      { ...base, provider: 'resend', baseUrl: endpoint },
+      { to: 'me@example.com', subject: '主题', text: '正文' },
+    );
+    expect(request.url).toBe(endpoint);
+    expect(new URL(request.url).searchParams.get('secret')).toBe(
+      'nb_247a22bf43c4499df587b25ffaf0b862',
+    );
+    expect(JSON.parse(request.body).to).toEqual(['me@example.com']);
+  });
 });
 
 describe('发信失败必须如实报错', () => {
