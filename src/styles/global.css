@@ -580,6 +580,7 @@ svg {
   line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
   -webkit-tap-highlight-color: transparent;
   transition: background-color 0.15s ease, border-color 0.15s ease,
     color 0.15s ease, transform 0.08s ease;
@@ -1792,4 +1793,143 @@ svg {
   .nb-composer__textarea {
     min-height: 176px;
   }
+}
+
+/* ---------------------------------------------- 多选与批量操作（收件箱） */
+
+.nb-idea--selected {
+  border-color: var(--nb-accent-line);
+  background: var(--nb-accent-soft);
+}
+
+.nb-idea__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nb-2);
+  align-self: flex-start;
+  min-height: 24px;
+  cursor: pointer;
+  color: var(--nb-ink-soft);
+  font-size: var(--nb-text-sm);
+}
+
+.nb-idea__checkbox {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--nb-accent);
+}
+
+/* --------------------------------------------------------- 徽标与标签补充 */
+
+.nb-badge--pending {
+  background: var(--nb-warn-soft);
+  color: var(--nb-warn);
+}
+
+.nb-chip--danger {
+  border-color: var(--nb-danger-line);
+  color: var(--nb-danger);
+}
+
+.nb-chip--danger:hover {
+  border-color: var(--nb-danger);
+  background: var(--nb-danger-soft);
+  color: var(--nb-danger-strong);
+}
+
+/* ------------------------------------------------------------- 弹层补充 */
+
+.nb-dialog__panel--lg {
+  max-width: 640px;
+}
+
+.nb-dialog__lead {
+  margin-top: var(--nb-2);
+  color: var(--nb-ink-soft);
+  font-size: var(--nb-text-sm);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------- 灵感海报 */
+
+.nb-poster__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: var(--nb-3);
+  border: 1px dashed var(--nb-line-strong);
+  border-radius: var(--nb-radius);
+  background: var(--nb-surface-soft);
+}
+
+.nb-poster__image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--nb-radius);
+  box-shadow: var(--nb-shadow-sm);
+}
+
+.nb-poster__styles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: var(--nb-2);
+}
+
+.nb-poster__style {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nb-1);
+  padding: var(--nb-3);
+  border: 1px solid var(--nb-line-strong);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-surface);
+  color: var(--nb-ink-soft);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nb-poster__style:hover:not(:disabled) {
+  border-color: var(--nb-ink-muted);
+}
+
+.nb-poster__style--active,
+.nb-poster__style--active:hover:not(:disabled) {
+  border-color: var(--nb-accent-line);
+  background: var(--nb-accent-soft);
+}
+
+.nb-poster__style:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.nb-poster__style-name {
+  font-size: var(--nb-text-base);
+  font-weight: 600;
+  color: var(--nb-ink-strong);
+}
+
+.nb-poster__style--active .nb-poster__style-name {
+  color: var(--nb-accent-strong);
+}
+
+.nb-poster__style-desc {
+  font-size: var(--nb-text-xs);
+  color: var(--nb-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.nb-poster__ideas {
+  max-height: 216px;
+  overflow-y: auto;
+}
+
+.nb-poster__prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
