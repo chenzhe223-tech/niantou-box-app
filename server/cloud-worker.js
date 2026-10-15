@@ -1339,7 +1339,7 @@ async function requestChat(env, cfg, payload, timeoutMs) {
  * 参数被拒时会返回 400。这里按「从最完整到最朴素」的顺序退让，而不是一遇到 400 就判失败——
  * 否则换个模型就要改代码。
  */
-async function callChat(env, messages, options = {}) {
+export async function callChat(env, messages, options = {}) {
   const cfg = aiConfig(env);
   if (!cfg.ready) throw new HttpError(503, 'AI 服务尚未配置。', 'AI_NOT_CONFIGURED');
 
