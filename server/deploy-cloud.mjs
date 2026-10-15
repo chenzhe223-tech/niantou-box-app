@@ -113,6 +113,9 @@ const SECRET_KEYS = [
   // 主模型额度不足 / 被限流时依次退让的备用模型（逗号或空格分隔，越靠前越优先）。
   // 放在这里是为了「配 glm-5.3 但账号没余额」不至于让整站 AI 变不可用。
   'AI_FALLBACK_MODELS',
+  // 免费额度剩多少 / 什么时候到期这类运维注记，会原样出现在 /capabilities.aiNote
+  // 并在设置页显示。免费包到期后上游只会静默 429、模型链自动降级，界面不说就没人知道。
+  'AI_NOTE',
   'IMAGE_BASE_URL',
   'IMAGE_API_KEY',
   'IMAGE_MODEL',
