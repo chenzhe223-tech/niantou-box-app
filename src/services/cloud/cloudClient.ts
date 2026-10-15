@@ -81,6 +81,12 @@ export interface CloudCapabilities {
   imageModels: string[];
   /** 服务端实际使用的邮件服务商（resend / sendgrid / mailgun / 空）。 */
   mailProvider: string;
+  /**
+   * 运维注记：免费额度还剩多少、什么时候到期这类服务端自己填的一句话。
+   * 没配就是空串。为什么要留这个口子：免费包到期后上游只会静默返回 429，
+   * 模型链会自动降级、用户完全无感 —— 这句话是唯一能提前说清楚的地方。
+   */
+  aiNote: string;
   /** 服务端发信地址（不是密钥，每封信头部都写着它）。 */
   mailFrom: string;
   mailFromName: string;
@@ -100,6 +106,7 @@ export const NO_CAPABILITIES: CloudCapabilities = {
   aiModels: [],
   imageModels: [],
   mailProvider: '',
+  aiNote: '',
   mailFrom: '',
   mailFromName: '',
 };
@@ -291,6 +298,7 @@ export async function fetchCapabilities(signal?: AbortSignal): Promise<CloudCapa
       aiModels: stringList(payload.aiModels),
       imageModels: stringList(payload.imageModels),
       mailProvider: typeof payload.mailProvider === 'string' ? payload.mailProvider : '',
+      aiNote: typeof payload.aiNote === 'string' ? payload.aiNote : '',
       mailFrom: typeof payload.mailFrom === 'string' ? payload.mailFrom : '',
       mailFromName: typeof payload.mailFromName === 'string' ? payload.mailFromName : '',
     };
