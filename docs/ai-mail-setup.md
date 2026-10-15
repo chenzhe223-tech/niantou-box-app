@@ -22,6 +22,26 @@
 
 > 只配一个智谱 API Key，就能同时点亮「AI 分类 + 隐私抽象 + AI 生图」三项。
 
+### 免费档 vs 充值档（这份项目当前用的是免费档）
+
+智谱账号里**没有余额**时，只有两个模型能返回真实结果，其余一律 429「余额不足或无可用资源包」：
+
+| 用途 | 免费档可用 | 充值后可用 | 实测 |
+| --- | --- | --- | --- |
+| 文本（分类 / 抽象） | `glm-4-flash` | `glm-5.3`、`glm-4.6`、`glm-4-plus` | 免费档 HTTP 200，充值档 HTTP 429 |
+| 图像（海报底图） | `cogview-3-flash` | `cogview-4-250304` | 免费档 HTTP 200 并返回图片，充值档 HTTP 429 |
+
+所以默认值就取这两个免费可用的模型 —— 只填一把 key 也能真的跑通。
+充值之后想换回更强的模型，改两个变量即可（不用改代码）：
+
+```powershell
+$env:AI_MODEL    = "glm-5.3"
+$env:IMAGE_MODEL = "cogview-4-250304"
+```
+
+> 免费档的 CogView 会在图片右下角打「AI 生成」水印。海报在返回前端后会统一裁掉底部一小条、
+> 补上品牌紫页脚（星形 + 「念头盒 NianBox」），所以分享出去的海报是干净的、品牌一致的。
+
 ---
 
 ## 二、接入智谱 GLM（AI 分类 / 隐私抽象）
@@ -29,6 +49,7 @@
 1. 打开智谱 AI 开放平台 <https://bigmodel.cn>，注册并完成实名认证。
 2. 在「API Keys」页面新建一个密钥（形如 `xxxxxxxx.yyyyyyyy`，**只在创建时完整显示一次**）。
 3. 在「模型」页面确认你的账号能调用目标模型，把模型名填进 `AI_MODEL`。
+   没充值时请填 `glm-4-flash`（默认值就是它）；充值后再改成 `glm-5.3`。
 
 写入 Worker 的三个值：
 
@@ -36,7 +57,7 @@
 | --- | --- | --- |
 | `AI_API_KEY` | 智谱的 API Key | **唯一必需项** |
 | `AI_BASE_URL` | 留空即 `https://open.bigmodel.cn/api/paas/v4` | 只有换服务商才需要填 |
-| `AI_MODEL` | 默认 `glm-5.3` | 账号里叫什么就填什么，写错时接口会把上游原话带回来 |
+| `AI_MODEL` | 默认 `glm-4-flash` | 账号里叫什么就填什么，写错时接口会把上游原话带回来 |
 | `AI_PROVIDER` | 留空自动判断（`zhipu` / `openai`） | 用自建代理、域名认不出来时才需要显式指定 |
 | `AI_PROVIDER_LABEL` | 例如 `智谱 AI（GLM）` | 纯展示，会出现在设置页的隐私说明里 |
 
@@ -60,7 +81,7 @@
 | --- | --- | --- |
 | `IMAGE_BASE_URL` | 留空即跟随 `AI_BASE_URL` | 换图像服务商时才填（OpenAI 兼容接口） |
 | `IMAGE_API_KEY` | 留空即复用 `AI_API_KEY` | 例如换成 OpenAI 图像接口时单独填 |
-| `IMAGE_MODEL` | 默认 `cogview-4-250304` | 智谱图像模型名 |
+| `IMAGE_MODEL` | 默认 `cogview-3-flash` | 智谱图像模型名（充值后可换成 `cogview-4-250304`） |
 | `IMAGE_PROVIDER_LABEL` | 例如 `智谱 CogView` | 展示用 |
 | `AI_IMAGE_DAILY_LIMIT` | 默认 `30` | 每个人每天成功生成海报底图的上限（`0` 或负数 = 不限制） |
 
@@ -69,7 +90,8 @@
 1. 先把念头**抽象**成主题 / 情绪 / 隐喻 / 视觉元素，只把抽象结果发给图像模型；
 2. 原始念头正文、个人信息、私人项目名、敏感细节**不会**进入图像模型的请求；
 3. 抽象结果会再过一遍隐私检查，判定不安全就**停止生成**并说明原因；
-4. 海报上的文字由前端叠加固定的品牌标识，图像模型优先生成无文字或少文字的图；
+4. 图像优先生成无文字或少文字的图，底部的品牌页脚（星形 + 「念头盒 NianBox」）由**前端**叠加：
+   星形取自 `BrandMark` 的同一段 SVG 路径，六种风格收尾一致，同时盖住服务商水印；
 5. 生成结果会被服务端下载后转成 `data:` 回传，避免临时链接过期、iOS / 微信跨域取图失败。
 
 配额保护：同一个用户每天成功生成海报的次数有上限（默认 30 次），超出时接口明确拒绝，不会静默烧钱。
@@ -154,7 +176,8 @@ curl https://nianbox-cloud.chenzhe223.workers.dev/capabilities
 # {"version":1,"classify":true,"abstract":true,"image":true,
 #  "mail":false,"passwordReset":false,
 #  "aiProvider":"智谱 AI（GLM）","imageProvider":"智谱 CogView",
-#  "aiModel":"glm-5.3","imageModel":"cogview-4-250304","mailProvider":""}
+#  "aiModel":"glm-4-flash","imageModel":"cogview-3-flash","mailProvider":""}
+# 智谱免费档的真实返回：classify / abstract / image 三项都是 true，mail 相关仍是 false。
 ```
 
 2. 打开应用 → 设置页 → 「你的内容会去哪里」这一段会写出**真实的**服务商与模型名；没配的会写明没配。
