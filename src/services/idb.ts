@@ -8,16 +8,22 @@ export const DB_NAME = 'nianbox';
  * 数据库版本。
  *
  * v1 → v2：新增 feedback 表（用户主动提交的意见反馈）。
+ * v2 → v3：新增 outbox 表（待同步到云端的本地变更队列）。
  * upgradeSchema 里每个建表语句都带 contains 守卫，因此老用户升级时
  * 已有表与数据不会被重建，只会补上缺的那张表。
  */
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export const STORE_IDEAS = 'ideas';
 export const STORE_PROJECTS = 'projects';
 export const STORE_META = 'meta';
 /** 用户主动提交的反馈（先落本机，再尝试上报）。 */
 export const STORE_FEEDBACK = 'feedback';
+/**
+ * 待同步队列：本地改了哪条记录、要做什么。以「实体 + ID」为主键，
+ * 因此同一条记录连续改十次也只留一条，不会把队列撑爆。
+ */
+export const STORE_OUTBOX = 'outbox';
 
 export interface MetaRecord {
   key: string;
@@ -65,6 +71,10 @@ function upgradeSchema(db: IDBDatabase): void {
     const feedback = db.createObjectStore(STORE_FEEDBACK, { keyPath: 'id' });
     feedback.createIndex('by_createdAt', 'createdAt');
     feedback.createIndex('by_uploadState', 'uploadState');
+  }
+  if (!db.objectStoreNames.contains(STORE_OUTBOX)) {
+    const outbox = db.createObjectStore(STORE_OUTBOX, { keyPath: 'key' });
+    outbox.createIndex('by_at', 'at');
   }
 }
 
