@@ -1,22 +1,27 @@
 /**
- * 念头收件箱：集中展示、搜索、筛选、置顶、编辑与删除。
+ * 念头收件箱：集中展示、搜索、筛选、置顶、编辑、删除与批量流转。
  *
  * 筛选与排序复用服务层的纯函数实现（filterIdeas），
  * 避免界面与数据层出现两套不一致的规则。
+ * 多选模式用来做批量「发送邮件 / 交给 AI / 生成海报」：
+ * 开启后点卡片是选或取消选，不会跳转，避免误触打断批量操作。
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppData } from '../app/AppDataProvider';
 import { paths } from '../app/routes';
+import { AiToolDialog } from '../components/AiToolDialog';
+import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
-import { Button } from '../components/Button';
 import { Icon } from '../components/Icon';
 import { IdeaCard } from '../components/IdeaCard';
+import { MailDialog } from '../components/MailDialog';
 import { useToast } from '../components/Toast';
+import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
 import { useNow } from '../hooks/useNow';
-import { filterIdeas } from '../services/query';
 import { track } from '../services/analytics';
+import { filterIdeas } from '../services/query';
 import { setIdeaPinned, softDeleteIdea, toNianBoxError } from '../services/storage';
 import {
   IDEA_CATEGORIES,
@@ -34,6 +39,7 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
   const { ideas, projects } = useAppData();
   const toast = useToast();
   const now = useNow();
+  const sync = useCloudSync();
 
   const [keyword, setKeyword] = useState('');
   const [category, setCategory] = useState<CategoryFilter>('all');
@@ -42,6 +48,11 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Idea | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [mailOpen, setMailOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
 
   const activeIdeas = useMemo(() => ideas.filter((idea) => idea.deletedAt === null), [ideas]);
 
@@ -68,6 +79,27 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
 
   const hasFilters = keyword.trim() !== '' || category !== 'all' || status !== 'all' || pinnedOnly;
 
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  /**
+   * 批量操作只能作用在「当前看得见的记录」上。
+   * 筛选条件一变，之前选中的记录可能已经不在列表里，
+   * 这时必须把它们从选中集合里摘掉，否则用户会误以为自己在操作屏幕上看到的条目。
+   */
+  const selectedIdeas = useMemo(
+    () => visible.filter((idea) => selectedSet.has(idea.id)),
+    [visible, selectedSet],
+  );
+
+  useEffect(() => {
+    setSelectedIds((previous) => {
+      if (previous.length === 0) return previous;
+      const alive = new Set(visible.map((idea) => idea.id));
+      const next = previous.filter((id) => alive.has(id));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [visible]);
+
   /**
    * 记录「有人用了搜索」这一事实（用于判断搜索值不值得继续做），
    * 但**永远不上报关键词本身**——关键词是用户的灵感，不是运营数据。
@@ -84,6 +116,24 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
     setCategory('all');
     setStatus('all');
     setPinnedOnly(false);
+  };
+
+  const toggleSelect = useCallback((idea: Idea) => {
+    setSelectedIds((previous) =>
+      previous.includes(idea.id)
+        ? previous.filter((id) => id !== idea.id)
+        : [...previous, idea.id],
+    );
+  }, []);
+
+  const enterSelectMode = () => {
+    setSelectMode(true);
+    setSelectedIds([]);
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds([]);
   };
 
   const handleTogglePin = async (idea: Idea) => {
@@ -109,6 +159,35 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
     } finally {
       setDeleting(false);
     }
+  };
+
+  const requireSelection = (): Idea[] | null => {
+    if (selectedIdeas.length === 0) {
+      toast.push({ message: '先选至少一条念头。', tone: 'info' });
+      return null;
+    }
+    return selectedIdeas;
+  };
+
+  const handleBulkMail = () => {
+    if (requireSelection()) setMailOpen(true);
+  };
+
+  const handleBulkAi = () => {
+    if (requireSelection()) setAiOpen(true);
+  };
+
+  const handleBulkPoster = () => {
+    const picked = requireSelection();
+    if (!picked) return;
+    if (picked.length > 1) {
+      toast.push({
+        message: '灵感海报一次针对一条念头生成，请只选一条。',
+        tone: 'info',
+      });
+      return;
+    }
+    navigate(paths.poster(picked[0].id));
   };
 
   return (
@@ -144,6 +223,15 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
           >
             <Icon name="pin" size={14} />
             只看置顶
+          </button>
+          <button
+            type="button"
+            className={selectMode ? 'nb-chip nb-chip--active' : 'nb-chip'}
+            aria-pressed={selectMode}
+            onClick={() => (selectMode ? exitSelectMode() : enterSelectMode())}
+          >
+            <Icon name="check" size={14} />
+            {selectMode ? '退出多选' : '多选'}
           </button>
         </div>
         <div className="nb-toolbar__row">
@@ -182,6 +270,41 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
         </div>
       </div>
 
+      {selectMode ? (
+        <div className="nb-actionbar" role="group" aria-label="批量操作">
+          <span className="nb-kv">
+            已选 {selectedIdeas.length} / {visible.length} 条
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="check"
+            disabled={visible.length === 0 || selectedIdeas.length === visible.length}
+            onClick={() => setSelectedIds(visible.map((idea) => idea.id))}
+          >
+            全选
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="close"
+            disabled={selectedIdeas.length === 0}
+            onClick={() => setSelectedIds([])}
+          >
+            取消选择
+          </Button>
+          <Button size="sm" variant="primary" icon="external" onClick={handleBulkMail}>
+            发送邮件
+          </Button>
+          <Button size="sm" variant="secondary" icon="sparkle" onClick={handleBulkAi}>
+            交给 AI
+          </Button>
+          <Button size="sm" variant="secondary" icon="download" onClick={handleBulkPoster}>
+            生成海报
+          </Button>
+        </div>
+      ) : null}
+
       {activeIdeas.length === 0 ? (
         <EmptyState
           icon="inbox"
@@ -213,6 +336,10 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
               now={now}
               busy={busyId === idea.id}
               projectName={projectNameByIdeaId.get(idea.id) ?? null}
+              pending={isIdeaPending(sync, idea.id)}
+              selectable={selectMode}
+              selected={selectedSet.has(idea.id)}
+              onToggleSelect={toggleSelect}
               onOpen={() => navigate(paths.idea(idea.id))}
               onTogglePin={(target) => {
                 void handleTogglePin(target);
@@ -222,6 +349,20 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
           ))}
         </ul>
       )}
+
+      <MailDialog
+        open={mailOpen}
+        ideas={selectedIdeas}
+        capabilities={sync.capabilities}
+        onClose={() => setMailOpen(false)}
+      />
+
+      <AiToolDialog
+        open={aiOpen}
+        ideas={selectedIdeas}
+        source="inbox"
+        onClose={() => setAiOpen(false)}
+      />
 
       <ConfirmDialog
         open={pendingDelete !== null}
