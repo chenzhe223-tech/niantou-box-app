@@ -69,6 +69,11 @@ export interface CloudCapabilities {
   /** 文本会发给哪个服务商（服务端如实填写，用于界面告知用户）。 */
   aiProvider: string;
   imageProvider: string;
+  /** 服务端实际使用的模型名（没配置时为空串，界面不显示）。 */
+  aiModel: string;
+  imageModel: string;
+  /** 服务端实际使用的邮件服务商（resend / sendgrid / mailgun / 空）。 */
+  mailProvider: string;
 }
 
 export const NO_CAPABILITIES: CloudCapabilities = {
@@ -80,6 +85,9 @@ export const NO_CAPABILITIES: CloudCapabilities = {
   passwordReset: false,
   aiProvider: '',
   imageProvider: '',
+  aiModel: '',
+  imageModel: '',
+  mailProvider: '',
 };
 
 interface RequestOptions {
@@ -257,6 +265,9 @@ export async function fetchCapabilities(signal?: AbortSignal): Promise<CloudCapa
       passwordReset: payload.passwordReset === true,
       aiProvider: typeof payload.aiProvider === 'string' ? payload.aiProvider : '',
       imageProvider: typeof payload.imageProvider === 'string' ? payload.imageProvider : '',
+      aiModel: typeof payload.aiModel === 'string' ? payload.aiModel : '',
+      imageModel: typeof payload.imageModel === 'string' ? payload.imageModel : '',
+      mailProvider: typeof payload.mailProvider === 'string' ? payload.mailProvider : '',
     };
   } catch {
     return null;
