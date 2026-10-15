@@ -489,7 +489,11 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
               <span className="nb-kvlist__label">AI 自动分类</span>
               <span className="nb-kvlist__value">
                 {sync.capabilities.classify
-                  ? `已接入${sync.capabilities.aiProvider ? `（${sync.capabilities.aiProvider}）` : ''}`
+                  ? `已接入${sync.capabilities.aiProvider ? `（${sync.capabilities.aiProvider}）` : ''}${
+                      sync.capabilities.aiModels.length > 0
+                        ? ` · ${sync.capabilities.aiModels.join(' → ')}`
+                        : ''
+                    }`
                   : '未配置（暂时按关键词判断）'}
               </span>
             </li>
@@ -497,14 +501,20 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
               <span className="nb-kvlist__label">海报图像生成</span>
               <span className="nb-kvlist__value">
                 {sync.capabilities.image
-                  ? `已接入${sync.capabilities.imageProvider ? `（${sync.capabilities.imageProvider}）` : ''}`
+                  ? `已接入${sync.capabilities.imageProvider ? `（${sync.capabilities.imageProvider}）` : ''}${
+                      sync.capabilities.imageModels.length > 0
+                        ? ` · ${sync.capabilities.imageModels.join(' → ')}`
+                        : ''
+                    }`
                   : '未配置（改用本机绘制的品牌模板）'}
               </span>
             </li>
             <li className="nb-kvlist__row">
               <span className="nb-kvlist__label">服务端邮件发送</span>
               <span className="nb-kvlist__value">
-                {sync.capabilities.mail ? '已接入' : '未配置（改用邮件应用预填）'}
+                {sync.capabilities.mail
+                  ? `已接入${sync.capabilities.mailFrom ? ` · ${sync.capabilities.mailFrom}` : ''}`
+                  : '未配置（改用邮件应用预填）'}
               </span>
             </li>
           </ul>
