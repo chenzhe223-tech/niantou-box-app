@@ -452,7 +452,11 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
               {mode === 'login' ? <>
                 <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在登录…' : '登录并同步'}</Button>
                 <Button variant="ghost" disabled={busy} onClick={() => { setMode('register'); setError(null); setNotice(null); }}>还没有账号？创建一个</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => { setMode('forgot'); setError(null); setNotice(null); }}>忘记密码？</Button>
+                {sync.capabilities.passwordReset ? (
+                  <Button variant="ghost" disabled={busy} onClick={() => { setMode('forgot'); setError(null); setNotice(null); }}>忘记密码？</Button>
+                ) : (
+                  <p className="nb-kv">忘记密码功能正在配置中；上线后可通过注册邮箱重置。</p>
+                )}
               </> : mode === 'register' ? <>
                 <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在创建…' : '创建账号'}</Button>
                 <Button variant="ghost" disabled={busy} onClick={() => { setMode('login'); setError(null); setNotice(null); }}>已有账号？返回登录</Button>
