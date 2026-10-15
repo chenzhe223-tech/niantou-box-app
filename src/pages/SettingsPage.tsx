@@ -228,6 +228,12 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         )}）`,
       );
     }
+    // 主模型额度不足时会自动退到后面的模型。这件事必须写出来：
+    // 否则「我明明配了 glm-5.3」和「日志里跑的是 glm-4-flash」就对不上了。
+    const chain = sync.capabilities.aiModels;
+    if (sync.capabilities.classify && chain.length > 1) {
+      parts.push(`文本模型链：${chain.join(' → ')}，前面的额度不足或被限流时自动退到下一个`);
+    }
     parts.push(
       sync.capabilities.image
         ? `图像由 ${providerLabel(
@@ -241,7 +247,7 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
       sync.capabilities.mail
         ? `邮件由服务端发送（${
             sync.capabilities.mailProvider || '服务端配置的邮件服务'
-          }），只有服务端确认成功才算发出`
+          }${sync.capabilities.mailFrom ? `，发件地址 ${sync.capabilities.mailFrom}` : ''}），只有服务端确认成功才算发出`
         : '邮件还没配置服务端发送，只会预填到你的邮件应用里，由你自己确认发送',
     );
     parts.push(
