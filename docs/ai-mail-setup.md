@@ -22,22 +22,52 @@
 
 > 只配一个智谱 API Key，就能同时点亮「AI 分类 + 隐私抽象 + AI 生图」三项。
 
-### 免费档 vs 充值档（这份项目当前用的是免费档）
+### 额度与成本：现在不用花钱（2026-10-15 实测）
 
-智谱账号里**没有余额**时，只有两个模型能返回真实结果，其余一律 429「余额不足或无可用资源包」：
+智谱账号的「我的资源包」里有一份**生效中**的赠送包，其余免费包都已于 2026-06-11 过期
+（账号可用余额 0 元、累计充值 0 元）：
 
-| 用途 | 免费档可用 | 充值后可用 | 实测 |
-| --- | --- | --- | --- |
-| 文本（分类 / 抽象） | `glm-4-flash` | `glm-5.3`、`glm-4.6`、`glm-4-plus` | 免费档 HTTP 200，充值档 HTTP 429 |
-| 图像（海报底图） | `cogview-3-flash` | `cogview-4-250304` | 免费档 HTTP 200 并返回图片，充值档 HTTP 429 |
+| 资源包 | 类型 | 状态 | 余额 | 到期 |
+| --- | --- | --- | --- | --- |
+| 【实名认证】500 万 GLM-5.3-Flash 体验包 | 赠送 | 生效中 | 4,997,178 tokens | 2026-11-15 17:30 |
 
-所以默认值就取这两个免费可用的模型 —— 只填一把 key 也能真的跑通。
-充值之后想换回更强的模型，改两个变量即可（不用改代码）：
+同一把 key 的实测结果（2026-10-15）：
 
-```powershell
-$env:AI_MODEL    = "glm-5.3"
-$env:IMAGE_MODEL = "cogview-4"
-```
+| 用途 | 模型 | 结果 | 延迟 | 计费 |
+| --- | --- | --- | --- | --- |
+| 分类 / 抽象 | `glm-5.3-flash` | HTTP 200，正文正常 | 1.6–7s | 走上面那份免费包（标价 0.8 元/M 入、2.8 元/M 出） |
+| 分类兜底 | `glm-4-flash` | HTTP 200，正文正常 | 0.4–1.3s | **永久免费** |
+| 海报底图 | `cogview-3-flash` | HTTP 200，真的出图 | 7.6–11.2s | **免费** |
+| 旗舰文本 | `glm-5.3` | HTTP 429 code=1113 余额不足 | — | 需充值 |
+| 高清出图 | `cogview-4`、`glm-image` | HTTP 429 code=1113 | — | 需充值 |
+
+一次分类大约吃掉 **300 tokens**（含系统提示词与思考链），按 4,997,178 tokens 的余额算
+**还能跑一万六千次左右**。以现在的量级，**不需要买任何资源包**。
+
+免费包用完或到期后**不会断服**：上游返回 429 时链会自动退到永久免费的 `glm-4-flash`
+（分类质量略降、速度更快）；充值或续包后，下一次调用又会自动落回 `glm-5.3-flash`。
+
+要买的话，性价比最高的是 **GLM-5.3-Flash 尝鲜包 9.9 元**（单价最低，正好补这条主力链）；
+想用旗舰 `glm-5.3` 才需要 39.9 元起的包。**现在不建议买。**
+
+### 思考型模型的两个坑（已修掉，别改回去）
+
+`glm-5.3-flash` / `glm-5.3` / `glm-4.7-flash` 是「始终思考」的模型：给答案之前会先输出一大段
+思考链，而**思考链同样吃 `max_tokens`**。实测（同一把 key）：
+
+| 形状 | 结果 |
+| --- | --- |
+| `max_tokens=60` + 分类提示词 | HTTP 200，但 `content` 是**空字符串**（预算全被思考链吃光） |
+| `max_tokens=2048` + 分类提示词 | HTTP 200，`content` = `{"category":"app"}`，共 292 tokens |
+| 加 `thinking: { type: 'disabled' }` | HTTP 400 code=1210「该模型始终思考，不支持关闭思考」 |
+
+所以服务端做了三件事，都不要改回去：
+
+1. 思考型模型的输出预算下限抬到 `THINKING_OUTPUT_FLOOR`（2048）—— `max_tokens` 只是上限、
+   不是计费量，模型答完就停，多留不会多花钱；留少了正文直接是空的。
+2. 对思考型模型**不发** `thinking` 参数（发了只会白挨一次 400）。
+3. 「HTTP 200 但正文为空」算失败：继续换请求形状、再换下一个模型，绝不把空回答当成功；
+   也不会把可能夹着念头原文的思考链写进 `service_log`。
 
 ### 模型退让链：配了 glm-5.3，也不会因为「还没充值」就整站不可用
 
@@ -46,15 +76,20 @@ $env:IMAGE_MODEL = "cogview-4"
 
 | 变量 | 含义 | 线上当前值 |
 | --- | --- | --- |
-| `AI_MODEL` | 主文本模型 | `glm-5.3` |
+| `AI_MODEL` | 主文本模型 | `glm-5.3-flash`（走免费体验包） |
 | `AI_FALLBACK_MODELS` | 备用文本模型（逗号 / 空格分隔，越靠前越优先） | `glm-4-flash` |
-| `IMAGE_MODEL` | 主图像模型 | `cogview-4` |
+| `IMAGE_MODEL` | 主图像模型 | `cogview-3-flash`（免费） |
 | `IMAGE_FALLBACK_MODELS` | 备用图像模型 | `cogview-3-flash` |
+| `AI_NOTE` | 只在设置页显示的额度注记（不是密钥） | 「GLM-5.3-Flash 免费体验包 5,000,000 tokens，2026-11-15 到期」 |
 
 - 链尾会自动补上免费档模型（`glm-4-flash` / `cogview-3-flash`），并且**自动去重**；
-  所以只写 `AI_MODEL=glm-5.3` 也是安全的。
+  所以只写 `AI_MODEL=glm-5.3-flash` 也是安全的。
+- `AI_NOTE` 会原样出现在 `GET /capabilities` 的 `aiNote` 字段并在设置页显示：免费包到期后
+  上游只会静默 429、链自动降级、用户毫无感知，这句话是唯一能提前说清楚的出口。
 - 鉴权失败（401 / 403）**不会**换模型重试 —— 换一个也一样失败，只会把真问题藏起来。
   参数写错（400 且与模型名无关）同理，如实抛错更好查。
+- 上游返回 **200 但正文为空**时同样会退让（思考型模型最常见的失败姿势），
+  并且会尝试同模型的下一档请求形状，再换下一个模型。
 - `GET /capabilities` 会回显整条链（`aiModels` / `imageModels`），分类与生图的响应里还会带上
   **实际作答 / 实际出图**的模型名（`model` 字段）：配的是 5.3、跑的是 flash，一眼看得见。
 - 因此**充值当天不需要改任何配置**：账号一有余额，下一次调用就直接落在 `glm-5.3` 上。
@@ -69,7 +104,8 @@ $env:IMAGE_MODEL = "cogview-4"
 1. 打开智谱 AI 开放平台 <https://bigmodel.cn>，注册并完成实名认证。
 2. 在「API Keys」页面新建一个密钥（形如 `xxxxxxxx.yyyyyyyy`，**只在创建时完整显示一次**）。
 3. 在「模型」页面确认你的账号能调用目标模型，把模型名填进 `AI_MODEL`。
-   没充值时请填 `glm-4-flash`（默认值就是它）；充值后再改成 `glm-5.3`。
+   账号里有免费体验包时填 `glm-5.3-flash`（现用值，见上一节）；什么都没买过就填默认的
+   `glm-4-flash`（永久免费）。
 
 写入 Worker 的三个值：
 
@@ -77,7 +113,8 @@ $env:IMAGE_MODEL = "cogview-4"
 | --- | --- | --- |
 | `AI_API_KEY` | 智谱的 API Key | **唯一必需项** |
 | `AI_BASE_URL` | 留空即 `https://open.bigmodel.cn/api/paas/v4` | 只有换服务商才需要填 |
-| `AI_MODEL` | 默认 `glm-4-flash` | 账号里叫什么就填什么，写错时接口会把上游原话带回来 |
+| `AI_MODEL` | 默认 `glm-4-flash`；线上现用 `glm-5.3-flash` | 账号里叫什么就填什么，写错时接口会把上游原话带回来 |
+| `AI_NOTE` | 例如「GLM-5.3-Flash 免费包 2026-11-15 到期」 | 只在设置页显示的额度注记，不是密钥 |
 | `AI_PROVIDER` | 留空自动判断（`zhipu` / `openai`） | 用自建代理、域名认不出来时才需要显式指定 |
 | `AI_PROVIDER_LABEL` | 例如 `智谱 AI（GLM）` | 纯展示，会出现在设置页的隐私说明里 |
 
@@ -247,7 +284,9 @@ $env:CF_API_TOKEN  = "<Cloudflare API Token>"
 $env:CF_ACCOUNT_ID = "<账号 ID>"
 $env:AI_API_KEY    = "<智谱 API Key>"
 # 需要就再加：
-# $env:AI_MODEL   = "glm-5.3"
+# $env:AI_MODEL   = "glm-5.3-flash"
+# $env:AI_FALLBACK_MODELS = "glm-4-flash"
+# $env:AI_NOTE    = "GLM-5.3-Flash 免费体验包 5,000,000 tokens，2026-11-15 到期"
 # $env:MAIL_API_BASE = "https://api.resend.com"
 # $env:MAIL_API_KEY  = "<Resend API Key>"
 # $env:MAIL_FROM     = "NianBox <no-reply@example.com>"
@@ -283,7 +322,9 @@ curl https://nianbox-cloud.chenzhe223.workers.dev/capabilities
 # {"version":1,"classify":true,"abstract":true,"image":true,
 #  "mail":false,"passwordReset":false,
 #  "aiProvider":"智谱 AI（GLM）","imageProvider":"智谱 CogView",
-#  "aiModel":"glm-4-flash","imageModel":"cogview-3-flash","mailProvider":""}
+#  "aiModel":"glm-5.3-flash","imageModel":"cogview-3-flash","mailProvider":"",
+#  "aiModels":["glm-5.3-flash","glm-4-flash"],"imageModels":["cogview-3-flash"],
+#  "aiNote":"GLM-5.3-Flash 免费体验包 5,000,000 tokens，2026-11-15 到期"}
 # 智谱免费档的真实返回：classify / abstract / image 三项都是 true，mail 相关仍是 false。
 ```
 
