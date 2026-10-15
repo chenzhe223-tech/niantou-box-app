@@ -2275,8 +2275,14 @@ export function buildMailRequest(cfg, { to, subject, text }) {
     };
   }
   // 默认：Resend 形状，自建中转也按这个收。
+  //
+  // 自建中转给的往往是一个**完整端点**（例如 Google Apps Script 的
+  // `…/exec?secret=xxx`）。那种地址末尾再拼 `/emails` 会污染查询串
+  // ——`secret` 会变成 `xxx/emails`，中转端一律拒绝。所以只要 base url
+  // 自己带了查询串，就当它是终点，原样使用。
+  const url = cfg.baseUrl.includes('?') ? cfg.baseUrl : `${cfg.baseUrl}/emails`;
   return {
-    url: `${cfg.baseUrl}/emails`,
+    url,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
     body: JSON.stringify({ from, to: [to], subject, text }),
   };
