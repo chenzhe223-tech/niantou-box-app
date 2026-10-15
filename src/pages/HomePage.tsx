@@ -17,6 +17,8 @@ import { EmptyState } from '../components/EmptyState';
 import { useToast } from '../components/Toast';
 import { useDraft } from '../hooks/useDraft';
 import { useNow } from '../hooks/useNow';
+import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
+import { classifyIdeaInBackground, trackClassifyOutcome } from '../services/aiClassify';
 import { createIdea, setIdeaPinned, softDeleteIdea, toNianBoxError } from '../services/storage';
 import {
   IDEA_CATEGORIES,
@@ -39,6 +41,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const toast = useToast();
   const draft = useDraft('home');
   const now = useNow();
+  const sync = useCloudSync();
 
   const [category, setCategory] = useState<CategoryChoice>('none');
   const [error, setError] = useState<string | null>(null);
@@ -81,11 +84,22 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
     setSaving(true);
     setError(null);
     try {
-      await createIdea({ content, category: category === 'none' ? null : category });
+      const created = await createIdea({
+        content,
+        category: category === 'none' ? null : category,
+      });
       // 只有写入真正成功后才清空输入并提示成功。
       draft.clear();
       setCategory('none');
       toast.push({ message: '收好了，这个念头不会轻易丢失。', tone: 'success' });
+      /**
+       * 分类是「保存成功之后」的附加动作：
+       * 先留住原始内容，再去问 AI；分类失败也不会影响已经存好的念头。
+       * 未登录 / 未配置云端时 classifyIdeaInBackground 会静默跳过，不发任何请求。
+       */
+      classifyIdeaInBackground(created.id, {
+        onDone: (outcome) => trackClassifyOutcome(outcome, 'home'),
+      });
     } catch (caught) {
       const message = toNianBoxError(caught).message;
       setError(message);
@@ -186,8 +200,38 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
 
       <p className="nb-kv nb-kv--spaced">
         已记录 <strong>{activeIdeas.length}</strong> 条念头 · <strong>{activeProjects.length}</strong>{' '}
-        个创意项目 · 数据保存在这台设备的浏览器里
+        个创意项目 ·{' '}
+        {sync.signedIn
+          ? '本机保存一份，登录的云端账号里保存一份'
+          : '数据保存在这台设备的浏览器里'}
       </p>
+
+      {sync.signedIn ? (
+        sync.pendingCount > 0 ? (
+          <p className="nb-kv">
+            还有 {sync.pendingCount} 项只在本机，联网后会自动同步到云端（也可以到
+            <button
+              type="button"
+              className="nb-link nb-link--button"
+              onClick={() => navigate(paths.cloud)}
+            >
+              云端同步
+            </button>
+            里手动重试）。
+          </p>
+        ) : null
+      ) : (
+        <p className="nb-kv">
+          <button
+            type="button"
+            className="nb-link nb-link--button"
+            onClick={() => navigate(paths.cloud)}
+          >
+            登录云端账号
+          </button>
+          ，手机和电脑就能共用同一份念头。
+        </p>
+      )}
 
       <section className="nb-section" aria-labelledby="nb-home-recent">
         <div className="nb-section__head">
@@ -219,6 +263,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
                 now={now}
                 busy={busyId === idea.id}
                 projectName={projectNameByIdeaId.get(idea.id) ?? null}
+                pending={isIdeaPending(sync, idea.id)}
                 onOpen={() => navigate(paths.idea(idea.id))}
                 onTogglePin={(target) => {
                   void handleTogglePin(target);
