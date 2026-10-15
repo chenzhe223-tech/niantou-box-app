@@ -24,6 +24,8 @@
  *   POST /ai/abstract                把念头抽象成主题 / 情绪 / 隐喻 / 视觉元素（含隐私检查）
  *   POST /ai/poster                  生成海报底图（未配置图像服务时返回 configured:false）
  *   POST /mail/send                  服务端发信（未配置邮件服务时返回 configured:false）
+ *   GET  /admin/users?q=<邮箱|ID>    运维：查账号概览（需要 ADMIN_TOKEN，绝不回显口令哈希）
+ *   POST /admin/password-reset       运维：为一个账号签发一次性密码重置链接（需要 ADMIN_TOKEN）
  *
  * 安全约定
  * --------
@@ -32,6 +34,9 @@
  * 3. 所有密钥（AI / 图像 / 邮件）都走 Worker secret，绝不进前端产物或公开仓库。
  * 4. 日志只记「调用了什么接口、成功与否」，不记内容。
  * 5. 未配置的外部服务一律明确返回 configured:false，绝不伪造成功。
+ * 6. /admin/* 只认 ADMIN_TOKEN（Worker secret），且未配置时**直接不可用**，绝不静默放行。
+ *    它存在的意义是：邮件通道（域名 + DKIM + 短信验证）任何一环卡住时，
+ *    运维仍能用「管理员令牌 → 一次性重置链接」把账号交还给账号主人。
  */
 
 /* -------------------------------------------------------------------------- */
@@ -58,6 +63,11 @@ const MAX_SESSIONS_PER_USER = 20;
 
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 12;
+
+/** 密码重置链接的有效期：够用户点开，又短到来不及被人捡走。 */
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+/** 运维看账号列表时一次最多返回多少条，避免误传 limit=100000 把响应体撑爆。 */
+const ADMIN_USER_LIMIT_MAX = 100;
 
 const IDEA_CATEGORIES = ['life', 'app', 'skill', 'web', 'other'];
 const IDEA_STATUSES = ['inbox', 'research', 'ready', 'building', 'done', 'paused'];
@@ -172,6 +182,13 @@ export default {
       }
       if (request.method === 'POST' && path === '/mail/send') {
         return await handleMail(request, env);
+      }
+
+      if (request.method === 'GET' && path === '/admin/users') {
+        return await handleAdminUsers(url, request, env);
+      }
+      if (request.method === 'POST' && path === '/admin/password-reset') {
+        return await handleAdminPasswordReset(request, env);
       }
 
       return json({ error: '没有这个接口。' }, 404);
@@ -747,19 +764,9 @@ async function handlePasswordResetRequest(request, env) {
     .bind(email).first();
   if (!user) return json({ requested: true, message });
 
-  const now = nowMs();
-  await env.DB.prepare('DELETE FROM password_reset_tokens WHERE user_id = ? OR expires_at <= ?')
-    .bind(user.id, now).run();
-  const rawToken = randomToken(32);
-  const tokenHash = await sha256Hex(rawToken);
-  await env.DB.prepare(
-    'INSERT INTO password_reset_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
-  ).bind(tokenHash, user.id, now, now + 30 * 60 * 1000).run();
+  const { tokenHash, resetUrl } = await issueResetToken(env, user);
 
   try {
-    const base = String(env.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/').trim();
-    const resetUrl = new URL(base);
-    resetUrl.hash = '/cloud?reset=' + encodeURIComponent(rawToken);
     const result = await sendMail(env, {
       to: user.email,
       subject: '【念头盒 NianBox】重置登录密码',
@@ -868,6 +875,179 @@ async function handlePassword(request, env) {
   // 改口令即登出所有设备（包括当前这台），用户重新登录一次即可。
   await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
   return json({ ok: true, reauthRequired: true });
+}
+
+/* -------------------------------------------------------------------------- */
+/* 运维接口（管理员令牌）                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 定长比较：两边都先做 SHA-256，再逐字节异或。
+ *
+ * 先摘要的意义是「比较的字节数恒为 32」—— 比较耗时不再随输入长度变化，
+ * 也就不会有人靠响应时间把令牌长度先试出来。
+ */
+async function constantTimeEqual(a, b) {
+  const [left, right] = await Promise.all([sha256Hex(String(a)), sha256Hex(String(b))]);
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let i = 0; i < left.length; i += 1) diff |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * 运维令牌校验。
+ *
+ * 未配置 ADMIN_TOKEN 时返回 503 而**不是**放行：/admin/* 能列出账号邮箱、还能给任意
+ * 账号签发重置链接，一旦在没配令牌的部署上静默放行，等于把全站账号交给任何知道地址的人。
+ * 所以宁可让接口整个不可用，也不降级。
+ */
+async function requireAdmin(request, env) {
+  const expected = String(env.ADMIN_TOKEN || '').trim();
+  if (!expected) {
+    throw new HttpError(
+      503,
+      '运维令牌尚未配置，请在 Worker 上设置 ADMIN_TOKEN 后再用这个页面。',
+      'ADMIN_TOKEN_NOT_CONFIGURED',
+    );
+  }
+  const header = request.headers.get('authorization') || '';
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  if (!match || !match[1].trim()) {
+    throw new HttpError(401, '请填入运维令牌。', 'UNAUTHENTICATED');
+  }
+  if (!(await constantTimeEqual(match[1].trim(), expected))) {
+    throw new HttpError(403, '运维令牌不正确。', 'FORBIDDEN');
+  }
+}
+
+/**
+ * 运维看账号：只回显邮箱、显示名、条数与最近同步时间。
+ * 口令哈希、会话令牌、重置令牌摘要一律不进这个投影，接口层面杜绝泄漏。
+ */
+const ADMIN_USER_COLUMNS = `u.id AS id, u.email AS email, u.display_name AS displayName,
+        u.created_at AS createdAt, u.updated_at AS updatedAt,
+        IFNULL(s.idea_count, 0) AS ideaCount, IFNULL(s.project_count, 0) AS projectCount,
+        IFNULL(s.last_sync_at, 0) AS lastSyncAt`;
+const ADMIN_USER_FROM = ' FROM users u LEFT JOIN user_state s ON s.user_id = u.id';
+
+function adminUserRow(row) {
+  return {
+    id: str(row.id, 60),
+    email: str(row.email, 200),
+    displayName: str(row.displayName, 60),
+    createdAt: num(row.createdAt),
+    updatedAt: num(row.updatedAt),
+    ideaCount: num(row.ideaCount),
+    projectCount: num(row.projectCount),
+    lastSyncAt: num(row.lastSyncAt),
+  };
+}
+
+async function handleAdminUsers(url, request, env) {
+  await requireAdmin(request, env);
+  const q = str(url.searchParams.get('q') || '', 200).trim();
+  const requested = Number(url.searchParams.get('limit'));
+  const limit = Math.min(Math.max(Number.isFinite(requested) ? Math.trunc(requested) : 30, 1), ADMIN_USER_LIMIT_MAX);
+
+  if (!q) {
+    const all = await env.DB.prepare(
+      `SELECT ${ADMIN_USER_COLUMNS}${ADMIN_USER_FROM} ORDER BY u.created_at DESC LIMIT ?`,
+    )
+      .bind(limit)
+      .all();
+    return json({ users: (all.results || []).map(adminUserRow) });
+  }
+
+  // 按 ID 精确查一条，再按邮箱模糊查一批，两次结果按顺序合并去重。
+  // 为什么不用 `email LIKE ? OR id = ?`：D1 在参数化查询里遇到「两种匹配方式混在一条
+  // 语句」时行为不稳（线上实测过这类 7500 报错），拆成两条语义一样、还更好索引。
+  const byId = await env.DB.prepare(
+    `SELECT ${ADMIN_USER_COLUMNS}${ADMIN_USER_FROM} WHERE u.id = ? LIMIT 1`,
+  )
+    .bind(q)
+    .all();
+  // 转义 LIKE 的通配符，否则搜 `_` 会变成「任意单字符」，搜出一堆无关账号。
+  const like = `%${q.replace(/[!%_]/g, (char) => `!${char}`)}%`;
+  const byEmail = await env.DB.prepare(
+    `SELECT ${ADMIN_USER_COLUMNS}${ADMIN_USER_FROM} WHERE u.email LIKE ? ESCAPE '!' ORDER BY u.created_at DESC LIMIT ?`,
+  )
+    .bind(like, limit)
+    .all();
+
+  const seen = new Set();
+  const merged = [];
+  for (const row of [...(byId.results || []), ...(byEmail.results || [])]) {
+    if (!row || seen.has(row.id)) continue;
+    seen.add(row.id);
+    merged.push(row);
+  }
+  return json({ users: merged.map(adminUserRow) });
+}
+
+/**
+ * 签发一次性重置令牌。
+ *
+ * 抽成公共函数，是为了让「邮件自助找回」和「运维代发」两条路径共用同一套 TTL、
+ * 同一套「先清掉旧令牌」的语义 —— 将来改规则只改这一处，不会两条路径跑偏。
+ */
+async function issueResetToken(env, user) {
+  const now = nowMs();
+  await env.DB.prepare('DELETE FROM password_reset_tokens WHERE user_id = ? OR expires_at <= ?')
+    .bind(user.id, now)
+    .run();
+  const rawToken = randomToken(32);
+  const tokenHash = await sha256Hex(rawToken);
+  const expiresAt = now + RESET_TOKEN_TTL_MS;
+  await env.DB.prepare(
+    'INSERT INTO password_reset_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
+  )
+    .bind(tokenHash, user.id, now, expiresAt)
+    .run();
+  return { rawToken, tokenHash, expiresAt, resetUrl: resetUrlFor(env, rawToken) };
+}
+
+/** 重置链接指向应用内的「设置新密码」页（前端从 hash 里读 reset 参数）。 */
+function resetUrlFor(env, rawToken) {
+  const base = String(env.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/').trim();
+  const url = new URL(base);
+  url.hash = '/cloud?reset=' + encodeURIComponent(rawToken);
+  return url;
+}
+
+/**
+ * 运维代发重置链接（不经过邮件）。
+ *
+ * 存在的理由：邮件通道要自有域名 + DKIM/DMARC + 服务商短信验证，任何一环卡住，
+ * 用户就彻底找不回密码。这条路径绕开邮件：运维验过令牌后拿到链接，自己用任意渠道
+ * （微信 / 短信 / 当面）交给账号主人。
+ *
+ * 它不降低安全性：能出示 ADMIN_TOKEN 的人本来就能直接改这份数据库。
+ */
+async function handleAdminPasswordReset(request, env) {
+  await requireAdmin(request, env);
+  const body = await readJson(request);
+  const rawEmail = str(body.email, 200).trim();
+  const email = rawEmail ? assertEmail(normalizeEmail(body.email)) : '';
+  const userId = str(body.userId, 60).trim();
+  if (!email && !userId) {
+    throw new HttpError(400, '请提供账号邮箱或用户 ID。', 'BAD_REQUEST');
+  }
+
+  const user = email
+    ? await env.DB.prepare('SELECT id, email FROM users WHERE email = ?').bind(email).first()
+    : await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(userId).first();
+  if (!user) throw new HttpError(404, '没有找到这个账号。', 'USER_NOT_FOUND');
+
+  const { resetUrl, expiresAt } = await issueResetToken(env, user);
+  await logService(env, user.id, 'password-reset', true, 'admin-issued');
+  return json({
+    ok: true,
+    userId: user.id,
+    email: user.email,
+    resetUrl: resetUrl.toString(),
+    expiresAt,
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1304,6 +1484,9 @@ export function capabilities(env) {
     image: image.ready,
     mail: mail.ready,
     passwordReset: mail.ready,
+    // 运维接口是否可用（ADMIN_TOKEN 已配置）。只是一个「配没配」的布尔值，
+    // 与 mail 一样属于服务端公开的能力开关，不含任何密钥本身。
+    admin: Boolean(String(env.ADMIN_TOKEN || '').trim()),
     // 供前端展示「数据会发给谁」：显式标签 > 服务商默认名 > 域名。
     aiProvider: ai.ready
       ? str(env.AI_PROVIDER_LABEL, 60) || PROVIDER_LABELS[ai.provider] || hostOf(ai.baseUrl)
