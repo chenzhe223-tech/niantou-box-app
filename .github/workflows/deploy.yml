@@ -46,9 +46,8 @@ env:
   # 留空即「不接入」：未注入 VITE_TELEMETRY_ENDPOINT 时应用不会发出任何网络请求。
   TELEMETRY_ENDPOINT: ${{ vars.TELEMETRY_ENDPOINT }}
   TELEMETRY_KEY: ${{ vars.TELEMETRY_KEY }}
-  # 开发期默认开启「设置 → 开发者」入口，方便你随时查看本机使用情况与反馈；
-  # 正式发布前把仓库变量 DEV_DASHBOARD 设成 0 即可关闭。
-  DEV_DASHBOARD: ${{ vars.DEV_DASHBOARD || '1' }}
+  # Public production builds never expose developer-only screens.
+  DEV_DASHBOARD: '0'
 
 # 同一时间只跑一个 Pages 部署；排队中的部署不取消正在进行的发布。
 concurrency:
@@ -91,7 +90,7 @@ jobs:
           VITE_APP_VERSION: ${{ github.sha }}
           VITE_TELEMETRY_ENDPOINT: ${{ env.TELEMETRY_ENDPOINT }}
           VITE_TELEMETRY_KEY: ${{ env.TELEMETRY_KEY }}
-          VITE_DEV_DASHBOARD: ${{ env.DEV_DASHBOARD }}
+          VITE_DEV_DASHBOARD: '0'
 
       - name: 报告匿名统计接入状态
         run: |
