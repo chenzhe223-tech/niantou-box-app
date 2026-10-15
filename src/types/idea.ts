@@ -23,6 +23,16 @@ export type IdeaStatus =
 /** 潜在产品形态。 */
 export type ProductForm = 'app' | 'website' | 'miniprogram' | 'skill' | 'other';
 
+/**
+ * 分类是谁定的。
+ * - `ai`：服务端 AI 模型给出；
+ * - `rules`：本机 / 服务端关键词规则兜底；
+ * - `manual`：用户自己改过；
+ * - `null`：还没分类。
+ * 界面会如实展示来源，不会把「规则猜的」说成「AI 想的」。
+ */
+export type IdeaCategorySource = 'ai' | 'rules' | 'manual';
+
 export interface Idea {
   id: string;
   /** 标题可选：留空时列表使用正文首句作为展示标题，不修改原文。 */
@@ -31,6 +41,8 @@ export interface Idea {
   content: string;
   /** 分类可选。 */
   category: IdeaCategory | null;
+  /** 分类来源（AI / 规则 / 手动），未分类时为 null。 */
+  categorySource: IdeaCategorySource | null;
   /** 状态，默认待整理。 */
   status: IdeaStatus;
   /** 标签，可多个。 */
@@ -77,6 +89,7 @@ export type IdeaPatch = Partial<
     | 'title'
     | 'content'
     | 'category'
+    | 'categorySource'
     | 'status'
     | 'tags'
     | 'pinned'
@@ -136,6 +149,10 @@ export const PRODUCT_FORMS: ReadonlyArray<{ value: ProductForm; label: string }>
 ];
 
 export const DEFAULT_STATUS: IdeaStatus = 'inbox';
+
+export function isCategorySource(value: unknown): value is IdeaCategorySource {
+  return value === 'ai' || value === 'rules' || value === 'manual';
+}
 
 export function isIdeaCategory(value: unknown): value is IdeaCategory {
   return (
