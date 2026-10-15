@@ -23,6 +23,7 @@
  *   IMAGE_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL 海报底图
  *   IMAGE_PROVIDER_LABEL                         展示给用户看的图像服务名称
  *   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM     服务端发信（Resend 兼容）
+ *   ADMIN_TOKEN                                  运维令牌：/admin/* 用它换一次性密码重置链接
  * 一个都没配也没关系：接口会如实返回 configured:false，前端不会伪造成功。
  */
 
@@ -119,6 +120,9 @@ const SECRET_KEYS = [
   // 否则「按文档配好了却完全不生效」是最难查的一类问题。
   'MAIL_FROM_NAME',
   'MAIL_PROVIDER',
+  // 运维令牌：配了之后 /admin/users 与 /admin/password-reset 才可用；
+  // 没配时这两个接口返回 503 ADMIN_TOKEN_NOT_CONFIGURED，绝不静默放行。
+  'ADMIN_TOKEN',
 ];
 const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'PUBLIC_APP_URL'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
