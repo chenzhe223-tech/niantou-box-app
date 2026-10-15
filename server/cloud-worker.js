@@ -1266,13 +1266,20 @@ export function imageConfig(env) {
   return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
 }
 
-/** 邮件服务商：Resend / SendGrid / 自建（默认按 Resend 的形状发）。 */
+/**
+ * 邮件服务商：Resend / SendGrid / Mailgun / Brevo / 自建（默认按 Resend 的形状发）。
+ *
+ * 为什么额外收一个 Brevo：Resend 与 SendGrid 都要求先验证**自有域名**，
+ * 而 Brevo 允许只验证一个**发件邮箱**就能给任意收件人发信。对还没有域名的
+ * 个人开发者来说，这是唯一能在十分钟内把「邮件找回密码」真正点亮的路径。
+ */
 export function resolveMailProvider(explicit, baseUrl) {
   const hint = String(explicit || '').trim().toLowerCase();
   if (hint) return hint;
   const host = hostOf(baseUrl);
   if (host.includes('sendgrid')) return 'sendgrid';
   if (host.includes('mailgun')) return 'mailgun';
+  if (host.includes('brevo') || host.includes('sendinblue')) return 'brevo';
   return 'resend';
 }
 
@@ -1886,9 +1893,10 @@ async function generateImage(env, cfg, { prompt, aspect }) {
 /**
  * 各邮件服务商的请求形状。
  *
- * 只有一处真差异：Resend 说 `to: [...]`，SendGrid 说
- * `personalizations[0].to[0].email`。适配器只做这一层翻译，失败一律如实上报，
- * 绝不把「我没配好」包装成「已发送」。
+ * 差异只在信封结构上：Resend 说 `to: [...]`，SendGrid 说
+ * `personalizations[0].to[0].email`，Mailgun 用表单编码 + Basic，
+ * Brevo 用 `api-key` 头 + `sender/to/textContent`。
+ * 适配器只做这一层翻译，失败一律如实上报，绝不把「我没配好」包装成「已发送」。
  */
 export function buildMailRequest(cfg, { to, subject, text }) {
   const from = cfg.fromName ? `${cfg.fromName} <${cfg.from}>` : cfg.from;
@@ -1918,6 +1926,19 @@ export function buildMailRequest(cfg, { to, subject, text }) {
         authorization: `Basic ${btoa(`api:${cfg.apiKey}`)}`,
       },
       body: form.toString(),
+    };
+  }
+  if (cfg.provider === 'brevo') {
+    // Brevo 把密钥放在 api-key 头（不是 Bearer），正文是 sender/to/textContent。
+    return {
+      url: `${cfg.baseUrl}/v3/smtp/email`,
+      headers: { 'content-type': 'application/json', 'api-key': cfg.apiKey },
+      body: JSON.stringify({
+        sender: { email: cfg.from, ...(cfg.fromName ? { name: cfg.fromName } : {}) },
+        to: [{ email: to }],
+        subject,
+        textContent: text,
+      }),
     };
   }
   // 默认：Resend 形状，自建中转也按这个收。
