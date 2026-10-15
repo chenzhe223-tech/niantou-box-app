@@ -6,6 +6,7 @@
 #   AI_BASE_URL / AI_API_KEY / AI_MODEL                （可选）自动分类与隐私抽象
 #   IMAGE_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL       （可选）海报底图
 #   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM           （可选）服务端发信
+#   AI_PROVIDER_LABEL / IMAGE_PROVIDER_LABEL           （可选）界面上展示的「数据发给了谁」
 #
 # 任何 AI / 邮件密钥都只写进 Cloudflare Worker secret，绝不进前端产物、绝不进仓库。
 # 一个都没配也能跑：接口会如实返回 configured:false，前端不会伪造成功。
@@ -49,9 +50,11 @@ jobs:
           AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
+          AI_PROVIDER_LABEL: ${{ secrets.AI_PROVIDER_LABEL }}
           IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
           IMAGE_API_KEY: ${{ secrets.IMAGE_API_KEY }}
           IMAGE_MODEL: ${{ secrets.IMAGE_MODEL }}
+          IMAGE_PROVIDER_LABEL: ${{ secrets.IMAGE_PROVIDER_LABEL }}
           MAIL_API_BASE: ${{ secrets.MAIL_API_BASE }}
           MAIL_API_KEY: ${{ secrets.MAIL_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
