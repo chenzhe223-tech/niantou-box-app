@@ -9,6 +9,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { initTelemetry } from './services/analytics';
+import { initCloudSync } from './services/cloud/cloudSync';
 import { initFeedbackRetry } from './services/feedback';
 import './styles/global.css';
 
@@ -26,6 +27,9 @@ if (!container) {
  */
 initTelemetry();
 initFeedbackRetry();
+// 云端同步层：没有注入 VITE_CLOUD_ENDPOINT 时不会发出任何网络请求。
+// 未登录时同步层只统计「本地有改动」，真正的上传发生在登录之后。
+initCloudSync();
 
 createRoot(container).render(
   <StrictMode>
