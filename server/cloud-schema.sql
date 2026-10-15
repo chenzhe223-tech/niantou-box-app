@@ -97,6 +97,15 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+-- Single-use password reset tokens; only SHA-256 hashes are stored.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens (user_id);
+
 CREATE TABLE IF NOT EXISTS login_throttle (
   -- sha256(IP + 服务端盐)，不落明文 IP
   ip_hash TEXT PRIMARY KEY,
