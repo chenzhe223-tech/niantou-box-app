@@ -1542,6 +1542,10 @@ export function capabilities(env) {
     // 模型名不是密钥，回显出来是为了让「到底接的哪个模型」可以自证。
     aiModel: ai.ready ? ai.model : '',
     imageModel: image.ready ? image.model : '',
+    // 免费额度 / 到期时间这类运维注记：配了就在设置页原样显示，没配就是空串。
+    // 为什么值得单独留一个字段：免费包到期后上游只会静默返回 429 + 1113，
+    // 链会自动退到兜底模型、用户毫无感知 —— 那句话是唯一能提前说清楚的出口。
+    aiNote: ai.ready ? str(env.AI_NOTE, 200) : '',
     // 整条退让链：第 1 个是配置的主模型，后面是额度不足/模型不可用时依次兜底的模型。
     // 回显整条链而不是只回主模型名，是为了避免「配置写着 glm-5.3，实际一直跑在免费档」
     // 这种看不出来的落差 —— 界面据此可以如实说明「当前实际兜底在哪个模型上」。
@@ -1619,13 +1623,53 @@ export function shouldTryNextModel(status, text) {
   return status === 400 && /\bmodel\b|模型/i.test(detail);
 }
 
+/**
+ * 思考型模型（GLM-5 / GLM-4.7 系）在给答案之前会先输出一大段「思考链」，
+ * 而思考链同样吃 max_tokens。
+ *
+ * 判据来自实测，不是猜的：glm-5.3-flash 用 max_tokens=60 做分类时返回 200，
+ * 但 content 是空字符串、reasoning_content 有 149 字 —— 预算全被思考链吃掉了。
+ * 更糟的是这类模型不认 `thinking: { type: 'disabled' }`，会直接 400 code=1210
+ * （「该模型始终思考，不支持关闭思考」），所以对它们只能给足预算，不能关思考。
+ */
+export function isThinkingModel(model) {
+  return /^glm-(5(\.|$|-)|4\.7(\.|$|-))/i.test(String(model || '').trim());
+}
+
+/**
+ * 思考型模型至少要留这么多输出预算。
+ *
+ * max_tokens 只是上限而不是计费量：模型答完就停，多留的额度不会额外收费，
+ * 但留少了会「思考链还没想完预算就没了」，正文直接是空的。宁可多留。
+ */
+export const THINKING_OUTPUT_FLOOR = 2048;
+
+/** 这一档模型实际下发的输出预算：思考型模型抬高下限，普通模型照调用方说的来。 */
+export function outputBudget(model, requested) {
+  const want = Number(requested);
+  const budget = Number.isFinite(want) && want > 0 ? Math.floor(want) : 600;
+  return isThinkingModel(model) ? Math.max(budget, THINKING_OUTPUT_FLOOR) : budget;
+}
+
+/** 从一次成功的对话响应里取正文；解析不了或正文为空都返回空串（由调用方决定怎么退让）。 */
+export function chatContent(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return '';
+  }
+  const content = parsed?.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? content.trim() : '';
+}
+
 export async function callChat(env, messages, options = {}) {
   const cfg = aiConfig(env);
   if (!cfg.ready) throw new HttpError(503, 'AI 服务尚未配置。', 'AI_NOT_CONFIGURED');
 
   const models = cfg.models && cfg.models.length > 0 ? cfg.models : [cfg.model];
   const timeoutMs = options.timeoutMs || 25_000;
-  let last = { ok: false, status: 0, text: '', model: models[0] };
+  let last = { ok: false, status: 0, text: '', model: models[0], empty: false };
   const tried = [];
 
   for (let index = 0; index < models.length; index += 1) {
@@ -1635,32 +1679,59 @@ export async function callChat(env, messages, options = {}) {
       model,
       messages,
       temperature: clampTemperature(options.temperature, 0.2),
-      max_tokens: options.maxTokens ?? 600,
+      max_tokens: outputBudget(model, options.maxTokens ?? 600),
     };
     const withJson = options.json ? { ...base, response_format: { type: 'json_object' } } : base;
     const shapes = [];
-    if (cfg.provider === 'zhipu' && options.json) {
-      // 分类是短任务，关掉思考链能省一半时间与额度；被拒就自动退回普通调用。
+    // 思考型模型不认 thinking 参数，发了只会白挨一次 400 code=1210。
+    if (cfg.provider === 'zhipu' && options.json && !isThinkingModel(model)) {
+      // 非思考型模型：分类是短任务，关掉思考链能省一半时间与额度；被拒就自动退回普通调用。
       shapes.push({ ...withJson, thinking: { type: 'disabled' } });
     }
     shapes.push(withJson);
     if (options.json) shapes.push(base);
 
     for (let i = 0; i < shapes.length; i += 1) {
-      last = { ...(await requestChat(env, cfg, shapes[i], timeoutMs)), model };
-      if (last.ok) break;
-      const canRetry = i < shapes.length - 1 && (last.status === 400 || last.status === 422);
+      const result = await requestChat(env, cfg, shapes[i], timeoutMs);
+      if (result.ok) {
+        const content = chatContent(result.text);
+        if (content) {
+          last = { ...result, model, empty: false, content };
+          break;
+        }
+        // 200 但正文为空：思考链把预算吃光了。这不是成功，记成可退让的失败继续往下试。
+        last = { ...result, ok: false, model, empty: true };
+      } else {
+        last = { ...result, model, empty: false };
+      }
+      const canRetry =
+        i < shapes.length - 1 && (last.status === 400 || last.status === 422 || last.empty === true);
       if (!canRetry) break;
     }
     if (last.ok) break;
-    // 主模型因为额度/限流跑不动时，退到链上的下一个模型；都不行就如实上报。
-    if (index < models.length - 1 && shouldTryNextModel(last.status, last.text)) continue;
+    // 主模型因为额度/限流/空回答跑不动时，退到链上的下一个模型；都不行就如实上报。
+    if (
+      index < models.length - 1 &&
+      (last.empty === true || shouldTryNextModel(last.status, last.text))
+    ) {
+      continue;
+    }
     break;
   }
 
   if (!last.ok) {
-    const error = new HttpError(502, `AI 服务返回错误（HTTP ${last.status}）。`, 'AI_UPSTREAM');
-    error.upstream = upstreamMessage(last.text);
+    const error = new HttpError(
+      502,
+      last.empty === true ? 'AI 服务没有返回内容。' : `AI 服务返回错误（HTTP ${last.status}）。`,
+      'AI_UPSTREAM',
+    );
+    if (last.empty === true) {
+      error.empty = true;
+      // 空回答的响应体里往往只有模型的思考链（可能含念头原文），一律不进日志。
+      error.upstream = 'empty-content';
+    } else {
+      error.upstream = upstreamMessage(last.text);
+    }
     // 把试过的模型名列出来：排障时「到底是没配额还是模型名写错了」一眼可辨。
     error.modelsTried = tried;
     throw error;
@@ -1672,19 +1743,7 @@ export async function callChat(env, messages, options = {}) {
     options.trace.modelsTried = tried;
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(last.text);
-  } catch {
-    throw new HttpError(502, 'AI 服务返回了无法解析的内容。', 'AI_UPSTREAM');
-  }
-  const content = parsed?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || content.trim() === '') {
-    const error = new HttpError(502, 'AI 服务没有返回内容。', 'AI_UPSTREAM');
-    error.upstream = upstreamMessage(last.text);
-    throw error;
-  }
-  return content;
+  return last.content;
 }
 
 const CATEGORY_LABELS = {
