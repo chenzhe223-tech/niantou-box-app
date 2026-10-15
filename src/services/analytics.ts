@@ -147,7 +147,7 @@ const QUEUE_KEY = `${STORAGE_PREFIX}queue.v1`;
 const COUNTER_KEY = `${STORAGE_PREFIX}counters.v1`;
 
 /** 默认是否开启匿名统计（后端未配置时无论如何都不会联网）。 */
-export const DEFAULT_TELEMETRY_ENABLED = true;
+export const DEFAULT_TELEMETRY_ENABLED = false;
 
 const MAX_QUEUE = 300;
 const MAX_BATCH = 40;
