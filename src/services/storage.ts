@@ -10,6 +10,7 @@
 import {
   STORE_FEEDBACK,
   STORE_IDEAS,
+  STORE_OUTBOX,
   STORE_PROJECTS,
   IndexedDbError,
   clearStore,
@@ -29,6 +30,7 @@ import {
   type IdeaPatch,
   type IdeaQuery,
   type NewIdeaInput,
+  isCategorySource,
   isIdeaCategory,
   isIdeaStatus,
   isProductForm,
@@ -42,6 +44,7 @@ import {
 } from '../types/project';
 import { matchesIdeaQuery, sortIdeas } from './query';
 import { track } from './analytics';
+import { publishLocalMutation } from './syncBus';
 
 export type StorageErrorCode =
   | 'EMPTY_CONTENT'
@@ -138,6 +141,9 @@ export function normalizeIdea(raw: Partial<Idea> & { id: string }): Idea {
     title: asString(raw.title),
     content: asString(raw.content),
     category: isIdeaCategory(raw.category) ? raw.category : null,
+    // 分类来源：只认 ai / rules / manual，其余（含旧数据里的 undefined）一律 null。
+    // 旧的备份文件没有这个字段，导入后会如实显示「未标注来源」而不是编一个。
+    categorySource: isCategorySource(raw.categorySource) ? raw.categorySource : null,
     status: isIdeaStatus(raw.status) ? raw.status : DEFAULT_STATUS,
     tags: Array.isArray(raw.tags)
       ? raw.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '')
@@ -197,6 +203,8 @@ export async function createIdea(input: NewIdeaInput): Promise<Idea> {
     title: asString(input.title),
     content,
     category: isIdeaCategory(input.category) ? input.category : null,
+    // 创建时永远没有来源：AI 分类是保存之后的异步动作，用户手改才算 manual。
+    categorySource: null,
     status: isIdeaStatus(input.status) ? input.status : DEFAULT_STATUS,
     tags: Array.isArray(input.tags)
       ? input.tags.map((tag) => tag.trim()).filter((tag) => tag !== '')
@@ -217,6 +225,7 @@ export async function createIdea(input: NewIdeaInput): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).add(idea));
   });
   emitChange();
+  publishLocalMutation({ entity: 'idea', id: idea.id, op: 'upsert', doc: idea });
   // 埋点只记录「发生了一件事」，不携带任何用户写下的内容。
   track('idea_created');
   return idea;
@@ -280,6 +289,16 @@ export async function updateIdea(id: string, patch: IdeaPatch): Promise<Idea> {
         : isIdeaCategory(patch.category)
           ? patch.category
           : null,
+    // 来源必须显式传入才改写：AI 分类与「用户手动改」走同一条更新路径，
+    // 只有调用方自己知道这次改动的性质，数据层不替它猜。
+    categorySource:
+      patch.categorySource === undefined
+        ? isCategorySource(existing.categorySource)
+          ? existing.categorySource
+          : null
+        : isCategorySource(patch.categorySource)
+          ? patch.categorySource
+          : null,
     status:
       patch.status === undefined
         ? existing.status
@@ -306,6 +325,7 @@ export async function updateIdea(id: string, patch: IdeaPatch): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'idea', id: updated.id, op: 'upsert', doc: updated });
   track('idea_updated');
   // 状态流转单独记一条：开发者据此知道用户卡在「待整理」还是走到了「准备开发」。
   if (existing.status !== updated.status) {
@@ -323,6 +343,7 @@ export async function setIdeaPinned(id: string, pinned: boolean): Promise<Idea> 
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'idea', id: updated.id, op: 'upsert', doc: updated });
   track('idea_pinned');
   return updated;
 }
@@ -342,6 +363,7 @@ export async function softDeleteIdea(id: string): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'idea', id: updated.id, op: 'upsert', doc: updated });
   track('idea_deleted');
   return updated;
 }
@@ -353,6 +375,7 @@ export async function restoreIdea(id: string): Promise<Idea> {
     await promisifyRequest(tx.objectStore(STORE_IDEAS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'idea', id: updated.id, op: 'upsert', doc: updated });
   track('idea_restored');
   return updated;
 }
@@ -374,6 +397,10 @@ export async function purgeIdea(id: string): Promise<void> {
     },
   );
   emitChange();
+  publishLocalMutation({ entity: 'idea', id, op: 'purge', doc: null });
+  for (const projectId of linked) {
+    publishLocalMutation({ entity: 'project', id: projectId, op: 'purge', doc: null });
+  }
   track('idea_purged');
 }
 
@@ -470,6 +497,8 @@ export async function upgradeIdeaToProject(
     },
   );
   emitChange();
+  publishLocalMutation({ entity: 'idea', id: updatedIdea.id, op: 'upsert', doc: updatedIdea });
+  publishLocalMutation({ entity: 'project', id: project.id, op: 'upsert', doc: project });
   track('idea_upgraded');
   return { idea: updatedIdea, project };
 }
@@ -511,6 +540,7 @@ export async function updateProject(id: string, patch: ProjectPatch): Promise<Pr
     await promisifyRequest(tx.objectStore(STORE_PROJECTS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'project', id: updated.id, op: 'upsert', doc: updated });
   track('project_updated', { progress: updated.progress });
   return updated;
 }
@@ -519,29 +549,30 @@ export async function softDeleteProject(id: string): Promise<void> {
   const raw = await readOne<Project>(STORE_PROJECTS, id);
   if (!raw) throw new NianBoxError('NOT_FOUND', '这个项目不存在。');
   const project = normalizeProject(raw);
+  const updated: Project = { ...project, deletedAt: Date.now(), updatedAt: Date.now() };
   await withTransaction({ stores: [STORE_PROJECTS] }, 'readwrite', async (tx) => {
-    await promisifyRequest(
-      tx.objectStore(STORE_PROJECTS).put({ ...project, deletedAt: Date.now(), updatedAt: Date.now() }),
-    );
+    await promisifyRequest(tx.objectStore(STORE_PROJECTS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'project', id: updated.id, op: 'upsert', doc: updated });
 }
 
 export async function restoreProject(id: string): Promise<void> {
   const raw = await readOne<Project>(STORE_PROJECTS, id);
   if (!raw) throw new NianBoxError('NOT_FOUND', '这个项目不存在。');
   const project = normalizeProject(raw);
+  const updated: Project = { ...project, deletedAt: null, updatedAt: Date.now() };
   await withTransaction({ stores: [STORE_PROJECTS] }, 'readwrite', async (tx) => {
-    await promisifyRequest(
-      tx.objectStore(STORE_PROJECTS).put({ ...project, deletedAt: null, updatedAt: Date.now() }),
-    );
+    await promisifyRequest(tx.objectStore(STORE_PROJECTS).put(updated));
   });
   emitChange();
+  publishLocalMutation({ entity: 'project', id: updated.id, op: 'upsert', doc: updated });
 }
 
 export async function purgeProject(id: string): Promise<void> {
   await deleteRecord(STORE_PROJECTS, id);
   emitChange();
+  publishLocalMutation({ entity: 'project', id, op: 'purge', doc: null });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -587,6 +618,99 @@ export async function writeRecords(
     },
   );
   emitChange();
+  // 导入的备份记录也要同步上去，否则「换台电脑导入完就只剩这一台有」。
+  for (const idea of ideas) {
+    publishLocalMutation({ entity: 'idea', id: idea.id, op: 'upsert', doc: idea });
+  }
+  for (const project of projects) {
+    publishLocalMutation({ entity: 'project', id: project.id, op: 'upsert', doc: project });
+  }
+}
+
+/**
+ * 把云端拉下来的记录写进本地缓存。
+ *
+ * 与 writeRecords 的区别（这一点很关键）：这里 **不广播变更**。拉下来的数据
+ * 已经被服务端接受过了，如果广播出去就会被当成「本机新改动」再次推回云端，
+ * 形成来回空转。同时这里会跳过「本地还有未推送修改」的记录，避免把用户
+ * 刚改完还没来得及上传的内容覆盖掉。
+ */
+export async function applyRemoteRecords(
+  ideas: readonly Idea[],
+  projects: readonly Project[],
+  purged: readonly { entity: 'idea' | 'project'; id: string }[] = [],
+  isPending: (entity: 'idea' | 'project', id: string) => boolean = () => false,
+): Promise<{ written: number; skipped: number }> {
+  const localIdeas = new Map<string, Idea>();
+  for (const item of await readAll<Idea>(STORE_IDEAS)) {
+    const normalized = normalizeIdea(item);
+    localIdeas.set(normalized.id, normalized);
+  }
+  const localProjects = new Map<string, Project>();
+  for (const item of await readAll<Project>(STORE_PROJECTS)) {
+    const normalized = normalizeProject(item);
+    localProjects.set(normalized.id, normalized);
+  }
+
+  const nextIdeas: Idea[] = [];
+  const nextProjects: Project[] = [];
+  const dropIdeas: string[] = [];
+  const dropProjects: string[] = [];
+  let skipped = 0;
+
+  for (const incoming of ideas) {
+    const local = localIdeas.get(incoming.id);
+    // 本地这条比云端还新、而且还没推上去 —— 保留本地，等推送时再对齐。
+    if (local && isPending('idea', incoming.id) && local.updatedAt > incoming.updatedAt) {
+      skipped += 1;
+      continue;
+    }
+    nextIdeas.push(incoming);
+  }
+  for (const incoming of projects) {
+    const local = localProjects.get(incoming.id);
+    if (local && isPending('project', incoming.id) && local.updatedAt > incoming.updatedAt) {
+      skipped += 1;
+      continue;
+    }
+    nextProjects.push(incoming);
+  }
+  for (const item of purged) {
+    if (item.entity === 'idea') dropIdeas.push(item.id);
+    else dropProjects.push(item.id);
+  }
+
+  if (
+    nextIdeas.length === 0 &&
+    nextProjects.length === 0 &&
+    dropIdeas.length === 0 &&
+    dropProjects.length === 0
+  ) {
+    return { written: 0, skipped };
+  }
+
+  await withTransaction(
+    { stores: [STORE_IDEAS, STORE_PROJECTS] },
+    'readwrite',
+    async (tx) => {
+      const ideaStore = tx.objectStore(STORE_IDEAS);
+      const projectStore = tx.objectStore(STORE_PROJECTS);
+      for (const id of dropIdeas) {
+        await promisifyRequest(ideaStore.delete(id));
+      }
+      for (const id of dropProjects) {
+        await promisifyRequest(projectStore.delete(id));
+      }
+      for (const idea of nextIdeas) {
+        await promisifyRequest(ideaStore.put(idea));
+      }
+      for (const project of nextProjects) {
+        await promisifyRequest(projectStore.put(project));
+      }
+    },
+  );
+  emitChange();
+  return { written: nextIdeas.length + nextProjects.length + dropIdeas.length + dropProjects.length, skipped };
 }
 
 export async function writeMeta(key: string, value: unknown): Promise<void> {
@@ -612,6 +736,9 @@ export async function clearAllData(): Promise<void> {
   await clearStore(STORE_IDEAS);
   await clearStore(STORE_PROJECTS);
   await clearStore(STORE_FEEDBACK);
+  // 待同步队列里存的是完整记录（含用户原文），清空数据时必须一起清掉，
+  // 否则「清空全部数据」之后队列还会把内容推上云端。
+  await clearStore(STORE_OUTBOX);
   emitChange();
 }
 
