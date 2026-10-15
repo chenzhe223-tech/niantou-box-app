@@ -13,7 +13,7 @@
 import type { Idea, IdeaCategory, IdeaCategorySource } from '../types/idea';
 import { isIdeaCategory } from '../types/idea';
 import { track } from './analytics';
-import { getIdea, toNianBoxError, updateIdea } from './storage';
+import { getIdea, listIdeas, toNianBoxError, updateIdea } from './storage';
 import { isCloudConfigured } from './cloud/cloudConfig';
 import { cloudRequest, describeCloudError } from './cloud/cloudClient';
 import { getCloudToken, isSignedIn } from './cloud/cloudAuth';
@@ -135,6 +135,66 @@ export function classifyIdeaInBackground(
       options.onDone?.(outcome);
     })
     .catch(() => undefined);
+}
+
+/**
+ * 一轮补分类最多处理多少条。
+ *
+ * 打开应用时可能一次冒出一批没分类的念头（旧设备迁移上来的、官网快速记录进来的），
+ * 这里设一个上限，避免一次性把接口打满；剩下的下一轮继续。
+ */
+const BACKFILL_LIMIT = 12;
+
+let backfillInFlight: Promise<number> | null = null;
+
+/**
+ * 给「还没有分类」的念头补一次分类。
+ *
+ * 首页写下的念头在保存时就会分类；这里兜住的是另外两条入口：
+ * 旧设备迁移上云的念头、以及官网快速记录进收件箱的念头——它们都只有原文，没有分类。
+ *
+ * 三条约束：
+ * 1. 只碰 `category === null` 的记录，用户手动选过分类的一条都不动。
+ * 2. 同一时间只跑一轮，重复调用返回同一个 Promise。
+ * 3. 任何失败都当作没发生——不抛错、不阻塞界面、不影响已保存的内容。
+ */
+export function classifyUncategorizedIdeas(options: { limit?: number } = {}): Promise<number> {
+  if (!canClassify()) return Promise.resolve(0);
+  if (backfillInFlight) return backfillInFlight;
+
+  const limit = Math.max(0, options.limit ?? BACKFILL_LIMIT);
+  const run = runBackfill(limit).finally(() => {
+    backfillInFlight = null;
+  });
+  backfillInFlight = run;
+  return run;
+}
+
+/** 仅供测试：清掉「正在跑」的标记，让用例之间互不影响。 */
+export function resetCategoryBackfillForTests(): void {
+  backfillInFlight = null;
+}
+
+async function runBackfill(limit: number): Promise<number> {
+  if (limit === 0) return 0;
+
+  let candidates: Idea[];
+  try {
+    const ideas = await listIdeas();
+    candidates = ideas
+      .filter((idea) => idea.deletedAt === null && idea.category === null)
+      .slice(0, limit);
+  } catch {
+    return 0;
+  }
+
+  let applied = 0;
+  for (const idea of candidates) {
+    // 串行执行：个人数据量很小，串行能让结果顺序稳定，也不会并发打满接口。
+    const outcome = await classifyIdea(idea.id);
+    if (outcome.status === 'applied') applied += 1;
+  }
+  return applied;
 }
 
 /**
