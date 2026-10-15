@@ -13,17 +13,21 @@ import {
   bytesToBase64,
   callChat,
   capabilities,
+  chatContent,
   clampTemperature,
   classifyByRules,
   imageConfig,
+  isThinkingModel,
   mailConfig,
   modelChain,
+  outputBudget,
   parseJsonLoose,
   posterSizeFor,
   resolveMailProvider,
   resolveProvider,
   sendMail,
   shouldTryNextModel,
+  THINKING_OUTPUT_FLOOR,
   upstreamMessage,
   ZHIPU_DEFAULT_CHAT_MODEL,
   ZHIPU_DEFAULT_IMAGE_MODEL,
@@ -561,6 +565,105 @@ describe('对话补全请求（GLM / OpenAI 兼容）', () => {
     ).rejects.toMatchObject({ status: 502, code: 'AI_UPSTREAM' });
     expect(called).toBe(1);
     vi.unstubAllGlobals();
+  });
+
+  /*
+   * 思考型模型这一组回归，来自一次真实线上事故：
+   * 分类时 max_tokens 只给 60，glm-5.3-flash 的 200 响应里 content 是空字符串
+   * （预算被思考链吃光），于是每一次分类都白等 2 秒再把错误抛给用户。
+   */
+  it('认得出「答案前会先长篇思考」的模型', () => {
+    expect(isThinkingModel('glm-5.3-flash')).toBe(true);
+    expect(isThinkingModel('glm-5.3')).toBe(true);
+    expect(isThinkingModel('glm-5')).toBe(true);
+    expect(isThinkingModel('glm-4.7-flash')).toBe(true);
+    // 免费兜底档不是思考型：它不思考，短预算就够。
+    expect(isThinkingModel('glm-4-flash')).toBe(false);
+    expect(isThinkingModel('cogview-3-flash')).toBe(false);
+    expect(isThinkingModel('')).toBe(false);
+  });
+
+  it('思考型模型的最小输出预算被抬高，普通模型照调用方说的来', () => {
+    // max_tokens 是上限不是计费量：多留不额外花钱，留少了正文直接是空的。
+    expect(outputBudget('glm-5.3-flash', 60)).toBe(THINKING_OUTPUT_FLOOR);
+    expect(outputBudget('glm-4-flash', 60)).toBe(60);
+    // 调用方本来就要得多时，不往下压。
+    expect(outputBudget('glm-5.3-flash', 8000)).toBe(8000);
+    expect(outputBudget('glm-4-flash', undefined)).toBe(600);
+  });
+
+  it('思考型模型不发 thinking 参数 —— 发了只会白挨一次 400', async () => {
+    const bodies = [];
+    vi.stubGlobal('fetch', async (url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return upstream(true, 200, {
+        choices: [{ message: { content: '{"category":"app"}', reasoning_content: '想了一会儿' } }],
+      });
+    });
+
+    await callChat({ AI_API_KEY: 'k', AI_MODEL: 'glm-5.3-flash' }, [{ role: 'user', content: '记账' }], {
+      json: true,
+      maxTokens: 60,
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].thinking).toBeUndefined();
+    expect(bodies[0].max_tokens).toBe(THINKING_OUTPUT_FLOOR);
+    vi.unstubAllGlobals();
+  });
+
+  it('200 但正文为空算失败：换下一档形状、再换下一个模型，绝不假装成功', async () => {
+    const bodies = [];
+    vi.stubGlobal('fetch', async (url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      // 主模型每一档都 200，但 content 是空的（思考链吃光预算）。
+      if (body.model === 'glm-5.3-flash') {
+        return upstream(true, 200, {
+          choices: [{ message: { content: '', reasoning_content: '想了很久还没落到答案' } }],
+        });
+      }
+      return upstream(true, 200, { choices: [{ message: { content: '{"category":"life"}' } }] });
+    });
+
+    const trace = {};
+    const content = await callChat(
+      { AI_API_KEY: 'k', AI_MODEL: 'glm-5.3-flash' },
+      [{ role: 'user', content: '通勤太久' }],
+      { json: true, trace },
+    );
+
+    expect(content).toBe('{"category":"life"}');
+    expect(trace.model).toBe(ZHIPU_DEFAULT_CHAT_MODEL);
+    // glm-5.3-flash 的两档形状都试过（json 与朴素），才退到兜底模型。
+    expect(bodies.filter((item) => item.model === 'glm-5.3-flash')).toHaveLength(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('整条链都只会空回答时如实抛错，且不把思考链正文写进日志', async () => {
+    vi.stubGlobal('fetch', async () =>
+      upstream(true, 200, {
+        choices: [{ message: { content: '', reasoning_content: '这段思考里可能夹着念头原文' } }],
+      }),
+    );
+
+    const error = await callChat({ AI_API_KEY: 'k', AI_MODEL: 'glm-5.3-flash' }, [
+      { role: 'user', content: 'x' },
+    ]).catch((e) => e);
+
+    expect(error).toMatchObject({ status: 502, code: 'AI_UPSTREAM', empty: true });
+    // 响应体里往往只有思考链，绝不能落进 service_log 的 detail 里。
+    expect(error.upstream).toBe('empty-content');
+    expect(error.upstream).not.toContain('念头原文');
+    vi.unstubAllGlobals();
+  });
+
+  it('chatContent 只认得到正文，别的都算没答', () => {
+    expect(chatContent('{"choices":[{"message":{"content":"  hey  "}}]}')).toBe('hey');
+    expect(chatContent('{"choices":[{"message":{"content":""}}]}')).toBe('');
+    expect(chatContent('{"choices":[{"message":{"reasoning_content":"只想不答"}}]}')).toBe('');
+    expect(chatContent('{"choices":[]}')).toBe('');
+    expect(chatContent('这不是 JSON')).toBe('');
   });
 });
 
