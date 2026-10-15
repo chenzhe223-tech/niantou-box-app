@@ -258,8 +258,12 @@ function hostOf(rawUrl) {
 /**
  * 服务商识别：显式配置优先，其次看域名，最后按 OpenAI 兼容处理。
  * 显式配置的意义是：即使换成自建代理（域名不认识），也能走对参数分支。
+ *
+ * 例外：只给了一把 key、既没给地址也没给服务商时，按本项目的默认选择（智谱 GLM）处理。
+ * 否则「只填 AI_API_KEY」会算成未配置——那是最容易踩的坑，配置文档里写的就是这条路。
+ * 判断依据只有 key 本身，不会凭空造出一个地址发给别的服务商。
  */
-export function resolveProvider(explicit, baseUrl) {
+export function resolveProvider(explicit, baseUrl, apiKey) {
   const hint = String(explicit || '').trim().toLowerCase();
   if (hint) return hint;
   const host = hostOf(baseUrl);
@@ -267,6 +271,7 @@ export function resolveProvider(explicit, baseUrl) {
   if (host.endsWith('openai.com') || host.endsWith('azure.com') || host.endsWith('deepseek.com')) {
     return 'openai';
   }
+  if (!host && String(apiKey || '').trim()) return 'zhipu';
   return 'openai';
 }
 
@@ -1222,9 +1227,9 @@ async function handleCapture(request, env) {
 export function aiConfig(env) {
   const source = env || {};
   const explicitBase = (source.AI_BASE_URL || '').trim();
-  const provider = resolveProvider(source.AI_PROVIDER, explicitBase);
-  const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
   const apiKey = (source.AI_API_KEY || '').trim();
+  const provider = resolveProvider(source.AI_PROVIDER, explicitBase, apiKey);
+  const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
   const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_CHAT_MODEL : '';
   const model = (source.AI_MODEL || fallbackModel).trim();
   return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
@@ -1234,9 +1239,13 @@ export function aiConfig(env) {
 export function imageConfig(env) {
   const source = env || {};
   const explicitBase = (source.IMAGE_BASE_URL || source.AI_BASE_URL || '').trim();
-  const provider = resolveProvider(source.IMAGE_PROVIDER || source.AI_PROVIDER, explicitBase);
-  const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
   const apiKey = (source.IMAGE_API_KEY || source.AI_API_KEY || '').trim();
+  const provider = resolveProvider(
+    source.IMAGE_PROVIDER || source.AI_PROVIDER,
+    explicitBase,
+    apiKey,
+  );
+  const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
   const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_IMAGE_MODEL : '';
   const model = (source.IMAGE_MODEL || fallbackModel).trim();
   return { baseUrl, apiKey, model, provider, ready: Boolean(baseUrl && apiKey && model) };
