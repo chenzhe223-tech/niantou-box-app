@@ -203,31 +203,51 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
    */
   const aiDisclosure = (() => {
     const parts: string[] = [];
+    // 服务名后面带上真实模型名，用户能核对到底哪个模型看到了自己的内容。
+    const providerLabel = (provider: string, model: string, fallback: string) => {
+      const name = provider || fallback;
+      return model ? `${name} / ${model}` : name;
+    };
     if (sync.capabilities.classify) {
       parts.push(
-        `保存后自动分类会把念头正文发给服务端的文本模型（${
-          sync.capabilities.aiProvider || '服务端配置的服务商'
-        }）`,
+        `保存后自动分类会把念头正文发给服务端的文本模型（${providerLabel(
+          sync.capabilities.aiProvider,
+          sync.capabilities.aiModel,
+          '服务端配置的服务商',
+        )}）`,
       );
     } else {
       parts.push('自动分类目前只按关键词判断，没有接入第三方文本模型');
     }
     if (sync.capabilities.abstract) {
       parts.push(
-        `灵感海报的「抽象」步骤会把内容发给文本模型（${
-          sync.capabilities.aiProvider || '服务端配置的服务商'
-        }）`,
+        `灵感海报的「抽象」步骤会把内容发给文本模型（${providerLabel(
+          sync.capabilities.aiProvider,
+          sync.capabilities.aiModel,
+          '服务端配置的服务商',
+        )}）`,
       );
     }
     parts.push(
       sync.capabilities.image
-        ? `图像由 ${sync.capabilities.imageProvider || '服务端配置的图像服务'} 生成，默认只发送抽象后的主题与意象，不发送念头原文`
+        ? `图像由 ${providerLabel(
+            sync.capabilities.imageProvider,
+            sync.capabilities.imageModel,
+            '服务端配置的图像服务',
+          )} 生成，默认只发送抽象后的主题与意象，不发送念头原文`
         : '图像生成尚未配置，海报只在本机绘制，不会生成假的 AI 图片',
     );
     parts.push(
       sync.capabilities.mail
-        ? '邮件由服务端发送，只有服务端确认成功才算发出'
+        ? `邮件由服务端发送（${
+            sync.capabilities.mailProvider || '服务端配置的邮件服务'
+          }），只有服务端确认成功才算发出`
         : '邮件还没配置服务端发送，只会预填到你的邮件应用里，由你自己确认发送',
+    );
+    parts.push(
+      sync.capabilities.passwordReset
+        ? '忘记密码可以走邮箱重置链接，服务端只保存令牌的哈希，用过一次就失效'
+        : '邮箱找回密码暂不可用，需要服务端先配好邮件服务',
     );
     return `${parts.join('；')}。`;
   })();
