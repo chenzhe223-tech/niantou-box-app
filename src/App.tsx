@@ -5,25 +5,24 @@
  * 刷新任意页面都不会 404。
  */
 
-import { useEffect, useRef, useState } from 'react';
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
 import { BrandMark } from './components/BrandMark';
-import { Button } from './components/Button';
 import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
 import { ToastProvider } from './components/Toast';
 import { useHashRoute } from './hooks/useHashRoute';
 import { DeveloperPage } from './pages/DeveloperPage';
+import { CloudPage } from './pages/CloudPage';
 import { FeedbackPage } from './pages/FeedbackPage';
 import { HomePage } from './pages/HomePage';
 import { IdeaDetailPage } from './pages/IdeaDetailPage';
 import { InboxPage } from './pages/InboxPage';
+import { PosterPage } from './pages/PosterPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrashPage } from './pages/TrashPage';
-import { createIdea } from './services/storage';
 
 /**
  * 底部导航的标签名。`none` 表示「当前页面不属于任何标签」
@@ -55,6 +54,13 @@ function activeTab(route: Route): TabName {
       return 'trash';
     case 'settings':
       return 'settings';
+    // 云端同步是从设置页进入的二级页面，底部导航停留在「设置」。
+    case 'cloud':
+      return 'settings';
+    // 灵感海报是独立工具页，不属于任何主导航标签。
+    case 'poster':
+    case 'posterTool':
+      return 'none';
     case 'feedback':
     case 'dev':
       return 'none';
@@ -78,6 +84,13 @@ function RouteView({ route, navigate }: { route: Route; navigate: (hash: string)
       return <TrashPage navigate={navigate} />;
     case 'settings':
       return <SettingsPage navigate={navigate} />;
+    case 'cloud':
+      return <CloudPage navigate={navigate} />;
+    // key 保证从「某条念头」和「海报工具」之间切换时重新初始化选择状态。
+    case 'poster':
+      return <PosterPage key={route.id} ideaId={route.id} navigate={navigate} />;
+    case 'posterTool':
+      return <PosterPage key="poster-tool" ideaId={null} navigate={navigate} />;
     case 'feedback':
       return <FeedbackPage navigate={navigate} />;
     case 'dev':
@@ -135,109 +148,13 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
   );
 }
 
-function CaptureReceiver() {
-  const handled = useRef(false);
-  const { route, navigate } = useHashRoute();
-  const [captureState, setCaptureState] = useState<'idle' | 'saving' | 'error'>('idle');
-
-  const saveIncomingIdea = async (content: string) => {
-    setCaptureState('saving');
-    try {
-      await createIdea({ content });
-      // Clear the transfer payload from browser history only after the local save succeeds.
-      window.history.replaceState(null, '', window.location.pathname + '#/inbox');
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-      setCaptureState('idle');
-    } catch {
-      // Keep the payload in the hash and show a retry option; never claim it was saved.
-      handled.current = false;
-      setCaptureState('error');
-    }
-  };
-
-  useEffect(() => {
-    if (handled.current) return;
-    const queryPayload = new URLSearchParams(window.location.search).get('capture');
-    const hashMatch = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
-    let incoming: string | null = queryPayload;
-    if (incoming === null && hashMatch) {
-      try {
-        incoming = decodeURIComponent(hashMatch[1]);
-      } catch {
-        setCaptureState('error');
-        return;
-      }
-    }
-    if (incoming === null) return;
-
-    let content = '';
-    try {
-      content = incoming.trim();
-    } catch {
-      setCaptureState('error');
-      return;
-    }
-    if (!content) return;
-
-    handled.current = true;
-    void saveIncomingIdea(content);
-  }, []);
-
-  if (captureState !== 'idle') {
-    return (
-      <div className="nb-app">
-        <main className="nb-app__main" role="status" aria-live="polite">
-          <section className="nb-page">
-            <div className="nb-hero">
-              <h1 className="nb-hero__title">
-                {captureState === 'saving' ? '正在收好这个念头…' : '这条念头还没保存成功'}
-              </h1>
-              <p className="nb-hero__sub">
-                {captureState === 'saving'
-                  ? '正在把官网输入的原文保存到当前设备的念头盒收件箱。'
-                  : '原文仍保留在本次跳转地址中，你可以重试保存。'}
-              </p>
-              {captureState === 'error' ? (
-                <Button onClick={() => {
-                  const queryPayload = new URLSearchParams(window.location.search).get('capture');
-                  const hashMatch = window.location.hash.match(/^#\/capture\?text=([\s\S]*)$/);
-                  let incoming: string | null = queryPayload;
-                  if (incoming === null && hashMatch) {
-                    try {
-                      incoming = decodeURIComponent(hashMatch[1]);
-                    } catch {
-                      setCaptureState('error');
-                      return;
-                    }
-                  }
-                  if (incoming === null) return;
-                  try {
-                    const content = incoming.trim();
-                    if (!content) return;
-                    handled.current = true;
-                    void saveIncomingIdea(content);
-                  } catch {
-                    setCaptureState('error');
-                  }
-                }}>
-                  重试保存
-                </Button>
-              ) : null}
-            </div>
-          </section>
-        </main>
-      </div>
-    );
-  }
-
-  return <Shell route={route} navigate={navigate} />;
-}
-
 export function App() {
+  const { route, navigate } = useHashRoute();
+
   return (
     <ToastProvider>
       <AppDataProvider>
-        <CaptureReceiver />
+        <Shell route={route} navigate={navigate} />
       </AppDataProvider>
     </ToastProvider>
   );
