@@ -254,6 +254,31 @@ describe('邮件请求形状', () => {
     expect(request.headers.authorization).toBe(`Basic ${btoa('api:k')}`);
     expect(new URLSearchParams(request.body).get('to')).toBe('me@example.com');
   });
+
+  // Brevo 是唯一「不验证域名、只验证一个发件邮箱」就能发信的选项，
+  // 对还没买域名的个人开发者是最后的退路，因此它的形状必须被钉住。
+  it('Brevo：api-key 头 + sender/to/textContent', () => {
+    const request = buildMailRequest(
+      { ...base, provider: 'brevo', baseUrl: 'https://api.brevo.com' },
+      { to: 'me@example.com', subject: '主题', text: '正文' },
+    );
+    expect(request.url).toBe('https://api.brevo.com/v3/smtp/email');
+    expect(request.headers['api-key']).toBe('k');
+    expect(request.headers.authorization).toBeUndefined();
+    expect(JSON.parse(request.body)).toEqual({
+      sender: { email: 'box@nianbox.dev', name: '念头盒' },
+      to: [{ email: 'me@example.com' }],
+      subject: '主题',
+      textContent: '正文',
+    });
+  });
+
+  it('只填 base url 也能认出服务商，不用额外写 MAIL_PROVIDER', () => {
+    expect(resolveMailProvider('', 'https://api.brevo.com')).toBe('brevo');
+    expect(resolveMailProvider('', 'https://api.sendinblue.com')).toBe('brevo');
+    expect(resolveMailProvider('', 'https://api.mailgun.net/v3/x')).toBe('mailgun');
+    expect(resolveMailProvider('', 'https://api.resend.com')).toBe('resend');
+  });
 });
 
 describe('发信失败必须如实报错', () => {
