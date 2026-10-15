@@ -8,6 +8,7 @@
 #   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM           （可选）服务端发信
 #   MAIL_PROVIDER / MAIL_FROM_NAME                     （可选）发信形状与显示名，留空自动判断
 #   AI_PROVIDER_LABEL / IMAGE_PROVIDER_LABEL           （可选）界面上展示的「数据发给了谁」
+#   NIANBOX_ADMIN_TOKEN                                （可选）运维令牌：运营看板用它签发一次性密码重置链接
 #
 # 任何 AI / 邮件密钥都只写进 Cloudflare Worker secret，绝不进前端产物、绝不进仓库。
 # 一个都没配也能跑：接口会如实返回 configured:false，前端不会伪造成功。
@@ -61,6 +62,8 @@ jobs:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_PROVIDER: ${{ secrets.MAIL_PROVIDER }}
           MAIL_FROM_NAME: ${{ secrets.MAIL_FROM_NAME }}
+          # 运维令牌：只写进 Worker secret，用于 /admin/* 接口。留空则 /admin/* 返回 503。
+          ADMIN_TOKEN: ${{ secrets.NIANBOX_ADMIN_TOKEN }}
           PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/' }}
         run: node server/deploy-cloud.mjs --emit-result=cloud-result.json
 
