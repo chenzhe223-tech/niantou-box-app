@@ -7,6 +7,7 @@
 
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
+import { isDevDashboardEnabled } from './app/telemetryConfig';
 import { BrandMark } from './components/BrandMark';
 import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
@@ -96,7 +97,7 @@ function RouteView({ route, navigate }: { route: Route; navigate: (hash: string)
     case 'feedback':
       return <FeedbackPage navigate={navigate} />;
     case 'dev':
-      return <DeveloperPage navigate={navigate} />;
+      return isDevDashboardEnabled() ? <DeveloperPage navigate={navigate} /> : <SettingsPage navigate={navigate} />;
   }
 }
 
