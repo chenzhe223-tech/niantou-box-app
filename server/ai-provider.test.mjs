@@ -17,11 +17,13 @@ import {
   classifyByRules,
   imageConfig,
   mailConfig,
+  modelChain,
   parseJsonLoose,
   posterSizeFor,
   resolveMailProvider,
   resolveProvider,
   sendMail,
+  shouldTryNextModel,
   upstreamMessage,
   ZHIPU_DEFAULT_CHAT_MODEL,
   ZHIPU_DEFAULT_IMAGE_MODEL,
@@ -211,6 +213,86 @@ describe('配置解析', () => {
     const caps = capabilities({ AI_API_KEY: 'k' });
     expect(caps.aiProvider).toBe('智谱 GLM');
     expect(caps.imageProvider).toBe('智谱 CogView');
+  });
+});
+
+/**
+ * 「配了 glm-5.3 但账号没充值」是这个项目真实踩过的坑：整站 AI 直接变不可用，
+ * 而配置页面看起来一切正常。这组测试盯的就是「额度不足要能自动降级、且降级过程
+ * 对用户是可见的」。
+ */
+describe('模型退让链', () => {
+  it('去重且保持顺序：主模型永远排第一', () => {
+    expect(modelChain('glm-5.3', 'glm-4-flash', ['glm-4-flash'])).toEqual([
+      'glm-5.3',
+      'glm-4-flash',
+    ]);
+  });
+
+  it('分隔符怎么混写都认（逗号 / 中文逗号 / 分号 / 换行 / 空格）', () => {
+    expect(modelChain('a', 'b, c；d;e\nf g', [])).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+  });
+
+  it('空值一律丢掉，不会在链上留一个空模型名', () => {
+    expect(modelChain('', '  ,  ； ', [])).toEqual([]);
+    expect(modelChain('', '', [''])).toEqual([]);
+  });
+
+  it('主模型写成 glm-5.3 时，链尾自动挂上免费兜底模型', () => {
+    const cfg = aiConfig({ AI_API_KEY: 'k', AI_MODEL: 'glm-5.3' });
+    expect(cfg.model).toBe('glm-5.3');
+    expect(cfg.models).toEqual(['glm-5.3', ZHIPU_DEFAULT_CHAT_MODEL]);
+  });
+
+  it('显式写 AI_FALLBACK_MODELS 时插在免费兜底之前，且不重复', () => {
+    const cfg = aiConfig({
+      AI_API_KEY: 'k',
+      AI_MODEL: 'glm-5.3',
+      AI_FALLBACK_MODELS: 'glm-4.6, glm-4-flash',
+    });
+    expect(cfg.models).toEqual(['glm-5.3', 'glm-4.6', 'glm-4-flash']);
+  });
+
+  it('图像模型同样有链：cogview-4 不行就退到免费的 cogview-3-flash', () => {
+    const cfg = imageConfig({ AI_API_KEY: 'k', IMAGE_MODEL: 'cogview-4' });
+    expect(cfg.models).toEqual(['cogview-4', ZHIPU_DEFAULT_IMAGE_MODEL]);
+  });
+
+  it('没配 zhipu key 时不塞兜底模型（否则会假装自己配好了）', () => {
+    const cfg = aiConfig({ AI_MODEL: 'gpt-4o-mini', AI_BASE_URL: 'https://api.openai.com/v1' });
+    expect(cfg.models).toEqual(['gpt-4o-mini']);
+    expect(cfg.ready).toBe(false);
+  });
+
+  it('只有「换模型有意义」的错误才值得退让', () => {
+    // 额度不足 / 限流 / 模型下线 —— 换一个模型确实可能跑通。
+    expect(shouldTryNextModel(429, '{"code":"1113","message":"余额不足或无可用资源包,请充值。"}')).toBe(true);
+    expect(shouldTryNextModel(402, '')).toBe(true);
+    expect(shouldTryNextModel(404, 'model not found')).toBe(true);
+    expect(shouldTryNextModel(400, '{"error":{"message":"model: glm-5.3 not exist"}}')).toBe(true);
+    // 鉴权失败换模型没用，如实抛出去更好查。
+    expect(shouldTryNextModel(401, 'invalid api key')).toBe(false);
+    expect(shouldTryNextModel(403, 'forbidden')).toBe(false);
+    // 普通的 400（参数写错）与 5xx 也不该靠换模型掩盖。
+    expect(shouldTryNextModel(400, 'invalid temperature')).toBe(false);
+    expect(shouldTryNextModel(500, 'internal error')).toBe(false);
+  });
+
+  it('capabilities 把整条链回显出来，让「实际跑在哪档」可以自证', () => {
+    const caps = capabilities({
+      AI_API_KEY: 'k',
+      AI_MODEL: 'glm-5.3',
+      IMAGE_MODEL: 'cogview-4',
+      MAIL_API_BASE: 'https://api.resend.com',
+      MAIL_API_KEY: 'k',
+      MAIL_FROM: 'box@nianbox.dev',
+      MAIL_FROM_NAME: '念头盒',
+    });
+    expect(caps.aiModels).toEqual(['glm-5.3', ZHIPU_DEFAULT_CHAT_MODEL]);
+    expect(caps.imageModels).toEqual(['cogview-4', ZHIPU_DEFAULT_IMAGE_MODEL]);
+    // 发件地址不是密钥，如实回显，投递不出去时才有迹可查。
+    expect(caps.mailFrom).toBe('box@nianbox.dev');
+    expect(caps.mailFromName).toBe('念头盒');
   });
 });
 
@@ -404,6 +486,63 @@ describe('对话补全请求（GLM / OpenAI 兼容）', () => {
     await expect(callChat(env, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({
       code: 'AI_UPSTREAM',
     });
+    vi.unstubAllGlobals();
+  });
+
+  it('主模型额度不足（429 / 1113）时自动退到兜底模型，并回传真正作答的模型', async () => {
+    const bodies = [];
+    vi.stubGlobal('fetch', async (url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if (body.model === 'glm-5.3') {
+        return upstream(false, 429, {
+          error: { code: '1113', message: '余额不足或无可用资源包,请充值。' },
+        });
+      }
+      return upstream(true, 200, { choices: [{ message: { content: '{"category":"life"}' } }] });
+    });
+
+    const trace = {};
+    const content = await callChat(
+      { AI_API_KEY: 'k', AI_MODEL: 'glm-5.3' },
+      [{ role: 'user', content: '通勤太久' }],
+      { json: true, trace },
+    );
+
+    expect(content).toBe('{"category":"life"}');
+    // 界面据此显示「这次是谁答的」，而不是显示配置里的主模型名。
+    expect(trace.model).toBe(ZHIPU_DEFAULT_CHAT_MODEL);
+    expect(trace.modelsTried).toEqual(['glm-5.3', ZHIPU_DEFAULT_CHAT_MODEL]);
+    // 额度类错误重试同一个模型没有意义：主模型只试一次就往下退。
+    expect(bodies.filter((item) => item.model === 'glm-5.3')).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('整条链都跑不通时如实抛错，并列出试过哪些模型', async () => {
+    vi.stubGlobal('fetch', async () =>
+      upstream(false, 429, { error: { code: '1113', message: '余额不足或无可用资源包,请充值。' } }),
+    );
+
+    const error = await callChat({ AI_API_KEY: 'k', AI_MODEL: 'glm-5.3' }, [
+      { role: 'user', content: 'x' },
+    ]).catch((e) => e);
+
+    expect(error).toMatchObject({ status: 502, code: 'AI_UPSTREAM' });
+    expect(error.modelsTried).toEqual(['glm-5.3', ZHIPU_DEFAULT_CHAT_MODEL]);
+    vi.unstubAllGlobals();
+  });
+
+  it('鉴权失败不换模型重试 —— 换一个也一样失败，只会把真问题藏起来', async () => {
+    let called = 0;
+    vi.stubGlobal('fetch', async () => {
+      called += 1;
+      return upstream(false, 401, { error: { message: 'API key 无效' } });
+    });
+
+    await expect(
+      callChat({ AI_API_KEY: 'k', AI_MODEL: 'glm-5.3' }, [{ role: 'user', content: 'x' }]),
+    ).rejects.toMatchObject({ status: 502, code: 'AI_UPSTREAM' });
+    expect(called).toBe(1);
     vi.unstubAllGlobals();
   });
 });
