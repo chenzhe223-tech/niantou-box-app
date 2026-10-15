@@ -457,7 +457,7 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
                 <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在创建…' : '创建账号'}</Button>
                 <Button variant="ghost" disabled={busy} onClick={() => { setMode('login'); setError(null); setNotice(null); }}>已有账号？返回登录</Button>
               </> : mode === 'forgot' ? <>
-                <Button type="submit" variant="primary" icon="mail" disabled={!canSubmit || busy}>{busy ? '正在发送…' : '发送重置链接'}</Button>
+                <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在发送…' : '发送重置链接'}</Button>
                 <Button variant="ghost" disabled={busy} onClick={() => { setMode('login'); setError(null); setNotice(null); }}>返回登录</Button>
               </> : <>
                 <Button type="submit" variant="primary" icon="check" disabled={!canSubmit || busy}>{busy ? '正在重置…' : '重置密码'}</Button>
