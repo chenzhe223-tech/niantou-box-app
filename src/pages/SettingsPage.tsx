@@ -27,7 +27,6 @@ import { useCloudSync } from '../hooks/useCloudSync';
 import { describeSyncPhase } from '../services/cloud/cloudSync';
 import {
   getTelemetryStatus,
-  resetInstallId,
   setTelemetryEnabled,
   track,
   type TelemetryStatus,
@@ -344,69 +343,29 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         </div>
       </section>
 
-      <section className="nb-section" aria-labelledby="nb-settings-telemetry">
-        <div className="nb-section__head">
-          <h2 className="nb-section__title" id="nb-settings-telemetry">
-            匿名使用统计
-          </h2>
-          <span className="nb-section__hint">
-            {telemetryConfigured ? '已连接统计服务' : '未连接统计服务'}
-          </span>
-        </div>
-        <div className="nb-card nb-card--pad nb-stack nb-stack--tight">
-          <label className="nb-check">
-            <input
-              className="nb-check__input"
-              type="checkbox"
-              checked={telemetry.enabled}
-              onChange={(event) => toggleTelemetry(event.target.checked)}
-            />
-            <span className="nb-check__body">
-              <span className="nb-check__label">允许上报匿名使用统计</span>
-              <span className="nb-check__hint">
-                只上报「发生了什么」：事件名与来源、状态、进度、数量档位这类枚举值。
-                <strong>不含念头正文、标题、标签或链接</strong>，也不含账号与个人信息，
-                只有一个随机生成、可随时重置的设备标识。
-              </span>
-            </span>
-          </label>
-
-          <p className="nb-kv">
-            {telemetryConfigured
-              ? '本次构建已连接统计服务：事件会先留在本机，再批量上报；断网时下次打开自动补发。'
-              : '本次构建没有配置统计服务，应用不会发出任何网络请求，统计只留在本机供你自己查看。'}
-            {' · '}
-            当前状态：{telemetry.enabled ? '允许上报' : '已关闭（不会上报任何数据）'}
-            {' · '}
-            待发送：{telemetry.queuedEvents} 条
-          </p>
-
-          <p className="nb-kv">
-            设备标识：<code className="nb-code">{telemetry.installId}</code>
-          </p>
-          <p className="nb-kv">
-            重置后，之后的数据无法与之前的数据关联；关闭统计会立刻清空待发送队列，关闭动作本身不上报。
-          </p>
-
-          <div className="nb-actionbar">
-            <Button
-              size="sm"
-              variant="secondary"
-              icon="refresh"
-              onClick={() => {
-                resetInstallId();
-                setTelemetry(getTelemetryStatus());
-                toast.push({
-                  message: '设备标识已重置，之前的数据无法再与这台设备关联。',
-                  tone: 'info',
-                });
-              }}
-            >
-              重置设备标识
-            </Button>
+      {telemetryConfigured ? (
+        <section className="nb-section" aria-labelledby="nb-settings-telemetry">
+          <div className="nb-section__head">
+            <h2 className="nb-section__title" id="nb-settings-telemetry">帮助改进念头盒</h2>
+            <span className="nb-section__hint">可选</span>
           </div>
-        </div>
-      </section>
+          <div className="nb-card nb-card--pad nb-stack nb-stack--tight">
+            <label className="nb-check">
+              <input className="nb-check__input" type="checkbox" checked={telemetry.enabled}
+                onChange={(event) => toggleTelemetry(event.target.checked)} />
+              <span className="nb-check__body">
+                <span className="nb-check__label">允许发送匿名功能使用统计</span>
+                <span className="nb-check__hint">
+                  仅用于了解功能使用情况，不会发送念头正文、标题、标签、项目链接或账号信息。你可以随时关闭。
+                </span>
+              </span>
+            </label>
+            <p className="nb-kv" role="status">
+              {telemetry.enabled ? '匿名统计已开启。' : '匿名统计已关闭，不会继续发送使用统计。'}
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       {/* 开发者看板入口：仅当构建时注入 DEV_DASHBOARD=1 时才存在，普通用户看不到。 */}
       {devDashboardEnabled ? (
