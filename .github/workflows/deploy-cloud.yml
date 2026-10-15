@@ -1,0 +1,53 @@
+# 念头盒 NianBox —— 部署云端同步后端（Cloudflare Worker + D1）。
+#
+# 只在需要时手动触发；也可以按需改成 push 触发。用到的 secret：
+#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit + D1:Edit 权限的令牌
+#   NIANBOX_IP_SALT        （可选）登录限流用的盐，重复部署传同一个值即可
+#   AI_BASE_URL / AI_API_KEY / AI_MODEL                （可选）自动分类与隐私抽象
+#   IMAGE_BASE_URL / IMAGE_API_KEY / IMAGE_MODEL       （可选）海报底图
+#   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM           （可选）服务端发信
+#
+# 任何 AI / 邮件密钥都只写进 Cloudflare Worker secret，绝不进前端产物、绝不进仓库。
+# 一个都没配也能跑：接口会如实返回 configured:false，前端不会伪造成功。
+
+name: 部署云端同步后端（Cloudflare）
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: 部署云端后端
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 部署云端后端并自检
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NIANBOX_IP_SALT: ${{ secrets.NIANBOX_IP_SALT }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
+          IMAGE_API_KEY: ${{ secrets.IMAGE_API_KEY }}
+          IMAGE_MODEL: ${{ secrets.IMAGE_MODEL }}
+          MAIL_API_BASE: ${{ secrets.MAIL_API_BASE }}
+          MAIL_API_KEY: ${{ secrets.MAIL_API_KEY }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        run: node server/deploy-cloud.mjs --emit-result=cloud-result.json
+
+      - name: 上传部署结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-deploy-result
+          path: cloud-result.json
