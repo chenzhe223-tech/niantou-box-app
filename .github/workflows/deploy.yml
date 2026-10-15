@@ -9,7 +9,10 @@
 # 4. VITE_OFFICIAL_SITE_URL 是官网（落地页）地址，构建时注入应用设置页的「打开官网首页」入口。
 #    默认指向念头盒官网；如官网换地址，改下面的 OFFICIAL_SITE_URL，或在仓库
 #    Settings → Secrets and variables → Actions → Variables 里建一个 OFFICIAL_SITE_URL 覆盖。
-# 5. 匿名统计 / 意见反馈的接收端由下面四个仓库变量控制，全部留空 = 不接入（应用不发出任何
+# 5. CLOUD_ENDPOINT 是跨终端云端同步的接口地址（Cloudflare Workers + D1）。
+#    默认指向已部署的 nianbox-cloud；换地址就改它，或用仓库变量 CLOUD_ENDPOINT 覆盖。
+#    这里只放公开接口地址，AI / 邮件 / 图像的服务端密钥一律放在 Worker 的 Secret 里，不进仓库。
+# 6. 匿名统计 / 意见反馈的接收端由下面四个仓库变量控制，全部留空 = 不接入（应用不发出任何
 #    网络请求，功能完全可用）：
 #      TELEMETRY_ENDPOINT  接口地址（POST）
 #      TELEMETRY_KEY       只能写入、不能读取的令牌（读取凭据永远不进产物）
@@ -38,6 +41,8 @@ permissions:
 # 官网（落地页）地址；留空则应用内不显示「打开官网首页」入口（宁可不显示，也不放点不动的假链接）。
 env:
   OFFICIAL_SITE_URL: ${{ vars.OFFICIAL_SITE_URL || 'https://chenzhe223-tech.github.io/niantou-box/' }}
+  # 云端同步接口地址；留空则本次构建不启用同步（应用继续纯本地可用）。
+  CLOUD_ENDPOINT: ${{ vars.CLOUD_ENDPOINT || 'https://nianbox-cloud.chenzhe223.workers.dev' }}
   # 留空即「不接入」：未注入 VITE_TELEMETRY_ENDPOINT 时应用不会发出任何网络请求。
   TELEMETRY_ENDPOINT: ${{ vars.TELEMETRY_ENDPOINT }}
   TELEMETRY_KEY: ${{ vars.TELEMETRY_KEY }}
@@ -82,6 +87,7 @@ jobs:
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
           VITE_OFFICIAL_SITE_URL: ${{ env.OFFICIAL_SITE_URL }}
+          VITE_CLOUD_ENDPOINT: ${{ env.CLOUD_ENDPOINT }}
           VITE_APP_VERSION: ${{ github.sha }}
           VITE_TELEMETRY_ENDPOINT: ${{ env.TELEMETRY_ENDPOINT }}
           VITE_TELEMETRY_KEY: ${{ env.TELEMETRY_KEY }}
@@ -103,6 +109,15 @@ jobs:
             fi
           else
             echo "未配置 TELEMETRY_ENDPOINT：应用不发出任何网络请求，统计与反馈只留在本机（这是安全默认值）。"
+          fi
+          if [ -n "$CLOUD_ENDPOINT" ]; then
+            if grep -rqsF "$CLOUD_ENDPOINT" dist/assets; then
+              echo "云端同步已接入：$CLOUD_ENDPOINT（地址已注入产物）"
+            else
+              echo "::warning::产物里没有找到云端地址 $CLOUD_ENDPOINT，请检查构建变量名。"
+            fi
+          else
+            echo "未配置 CLOUD_ENDPOINT：本次构建不启用云端同步，应用继续纯本地可用。"
           fi
 
       - name: 校验官网回链是否已注入产物
