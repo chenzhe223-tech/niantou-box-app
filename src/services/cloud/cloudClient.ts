@@ -72,8 +72,18 @@ export interface CloudCapabilities {
   /** 服务端实际使用的模型名（没配置时为空串，界面不显示）。 */
   aiModel: string;
   imageModel: string;
+  /**
+   * 完整的模型退让链（第 1 个是配置的主模型）。
+   * 为什么整条回显：配了 glm-5.3 却因为账号余额不足一直跑在免费档，
+   * 只看 aiModel 是看不出来的 —— 界面据此如实说明「额度不足时会自动降级」。
+   */
+  aiModels: string[];
+  imageModels: string[];
   /** 服务端实际使用的邮件服务商（resend / sendgrid / mailgun / 空）。 */
   mailProvider: string;
+  /** 服务端发信地址（不是密钥，每封信头部都写着它）。 */
+  mailFrom: string;
+  mailFromName: string;
 }
 
 export const NO_CAPABILITIES: CloudCapabilities = {
@@ -87,7 +97,11 @@ export const NO_CAPABILITIES: CloudCapabilities = {
   imageProvider: '',
   aiModel: '',
   imageModel: '',
+  aiModels: [],
+  imageModels: [],
   mailProvider: '',
+  mailFrom: '',
+  mailFromName: '',
 };
 
 interface RequestOptions {
@@ -247,6 +261,13 @@ export async function cloudRequest<T>(path: string, options: RequestOptions = {}
   throw lastError ?? new CloudError('network', '云端请求失败。', { reason: 'UNKNOWN' });
 }
 
+/** 只认字符串数组：服务端字段缺失或类型不对时当空数组，不让界面显示半截内容。 */
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+    : [];
+}
+
 /** 探测服务端能力。失败返回 null，绝不猜测「大概配置好了」。 */
 export async function fetchCapabilities(signal?: AbortSignal): Promise<CloudCapabilities | null> {
   try {
@@ -267,7 +288,11 @@ export async function fetchCapabilities(signal?: AbortSignal): Promise<CloudCapa
       imageProvider: typeof payload.imageProvider === 'string' ? payload.imageProvider : '',
       aiModel: typeof payload.aiModel === 'string' ? payload.aiModel : '',
       imageModel: typeof payload.imageModel === 'string' ? payload.imageModel : '',
+      aiModels: stringList(payload.aiModels),
+      imageModels: stringList(payload.imageModels),
       mailProvider: typeof payload.mailProvider === 'string' ? payload.mailProvider : '',
+      mailFrom: typeof payload.mailFrom === 'string' ? payload.mailFrom : '',
+      mailFromName: typeof payload.mailFromName === 'string' ? payload.mailFromName : '',
     };
   } catch {
     return null;
