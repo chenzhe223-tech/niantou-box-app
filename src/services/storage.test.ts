@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { closeDatabase, openDatabase } from './idb';
+import { STORE_IDEAS, closeDatabase, openDatabase, putRecord } from './idb';
 import {
   NianBoxError,
   createIdea,
@@ -415,5 +415,46 @@ describe('创意项目', () => {
     expect(await getProject(project.id)).toBeNull();
     // 念头本身不受影响，只是不再指向已删除的项目。
     expect(await getIdea(idea.id)).not.toBeNull();
+  });
+});
+
+describe('念头：作品字段（works）的兼容读取', () => {
+  it('合法的作品条目保留，残缺的条目被丢弃', async () => {
+    const idea = await createIdea({ content: '作品字段兼容检查' });
+    const works: unknown[] = [
+      {
+        id: 'work_kept',
+        kind: 'poster',
+        render: 'ai',
+        style: 'brand',
+        aspect: '3:4',
+        public: false,
+        createdAt: idea.createdAt,
+      },
+      // 缺 id
+      { kind: 'poster', render: 'ai', style: 'brand', aspect: '3:4', public: false, createdAt: 1 },
+      // 渲染方式不在白名单里
+      { id: 'work_bad_render', kind: 'poster', render: 'print', style: 'brand', aspect: '3:4', public: false, createdAt: 1 },
+      // 创建时间不是有效数字
+      { id: 'work_bad_time', kind: 'poster', render: 'ai', style: 'brand', aspect: '3:4', public: false, createdAt: Number.NaN },
+      // 不是海报
+      { id: 'work_bad_kind', kind: 'card', render: 'ai', style: 'brand', aspect: '3:4', public: false, createdAt: 1 },
+      'not-an-object',
+    ];
+    // 直接写一条「老数据 + 混入坏条目」的原始记录，验证读取时的兜底。
+    await putRecord(STORE_IDEAS, { ...idea, works });
+
+    const reloaded = await getIdea(idea.id);
+    expect(reloaded?.works).toHaveLength(1);
+    expect(reloaded?.works?.[0].id).toBe('work_kept');
+    expect(reloaded?.works?.[0].render).toBe('ai');
+    // 原始念头的内容不受影响。
+    expect(reloaded?.content).toBe('作品字段兼容检查');
+  });
+
+  it('从来没记录过作品时保持 undefined，而不是补一个空数组', async () => {
+    const idea = await createIdea({ content: '没有作品字段的念头' });
+
+    expect((await getIdea(idea.id))?.works).toBeUndefined();
   });
 });
