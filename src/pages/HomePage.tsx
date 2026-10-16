@@ -48,13 +48,21 @@ const CATEGORY_CHOICES: ReadonlyArray<{ value: CategoryChoice; label: string }> 
 const PLACEHOLDER = '比如：为什么每次停车时，我明明知道停车场位置，却总是找不到空车位？';
 const COMPOSER_ID = 'nb-home-composer';
 
+/**
+ * 本机念头卡片的统一说法：不需要登录、不需要联网、不消耗 AI 模型额度。
+ * 凡是提到「AI 生图不可用」的地方，都紧跟这一句，明确替代路径一直都在。
+ */
+const LOCAL_CARD_HINT =
+  '不登录也能在这台设备上直接制作本机念头卡片：不需要联网，也不消耗 AI 模型额度，做好之后可以保存到我的作品并分享。';
+
 export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const { ideas, projects } = useAppData();
   const toast = useToast();
   const draft = useDraft('home');
   const now = useNow();
   const sync = useCloudSync();
-  const works = useWorks();
+  // 首页只展示最近几件作品：只把这几件作品的图片读进内存，旧图片不参与。
+  const works = useWorks({ imageLimit: 4 });
 
   const [category, setCategory] = useState<CategoryChoice>('none');
   const [error, setError] = useState<string | null>(null);
@@ -95,10 +103,14 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
    * 没登录时用户照样可以在这台设备上制作本机念头卡片，所以入口按钮不会被禁用。
    */
   const posterReady = sync.configured && sync.signedIn;
+  /**
+   * 这里只说**原因**，句子的其余部分交给文案拼装。
+   * 空字符串表示 AI 增强生图可用；否则是「这台设备上 AI 生图为什么用不了」。
+   */
   const posterBlockedReason = !sync.configured
-    ? '这个构建没有配置云端地址，AI 增强生图暂时不可用；不登录也可以直接制作本机念头卡片。'
+    ? '这个构建没有配置云端地址'
     : !sync.signedIn
-      ? 'AI 增强生图需要先登录云端账号（用来确认这些念头属于你）；不登录也可以直接制作本机念头卡片。'
+      ? '还没有登录云端账号'
       : '';
 
   /** 首页只展示最近三件作品，其余的走「查看全部」。 */
@@ -320,7 +332,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
           <p className="nb-quickstart__note">
             {posterReady
               ? '这两个入口都会先把这句话原样存好，再继续下一步；生成失败也不会影响已经存下的内容。'
-              : `${posterBlockedReason}先把这句话存好，再继续下一步：生成失败也不会影响已经存下的内容。`}
+              : `AI 增强生图需要云端配置、登录状态和可用的服务端模型，当前${posterBlockedReason}，所以暂时用不了。${LOCAL_CARD_HINT}两个入口都会先把这句话原样存好，再继续下一步。`}
           </p>
         </div>
 
@@ -414,7 +426,8 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
 
           {!posterReady ? (
             <p className="nb-saved__note">
-              {posterBlockedReason}
+              {`AI 增强生图需要云端配置、登录状态和可用的服务端模型，当前${posterBlockedReason}，所以暂时用不了。`}
+              {LOCAL_CARD_HINT}
               <button
                 type="button"
                 className="nb-link nb-link--button"
@@ -422,6 +435,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
               >
                 去云端同步页
               </button>
+              只在想用 AI 增强生图时才需要配置，制作本机念头卡片不经过这一步。
             </p>
           ) : (
             <p className="nb-saved__note">
