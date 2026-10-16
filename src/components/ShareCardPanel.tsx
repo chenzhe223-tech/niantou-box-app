@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { copyText } from '../services/aiTools';
 import {
   POSTER_ASPECTS,
+  SHARE_UNSUPPORTED_MESSAGE,
   downloadPoster,
   renderLocalShareCard,
   sharePoster,
@@ -22,6 +23,8 @@ import {
   type PosterAspect,
   type ShareCardTextMode,
 } from '../services/poster';
+import { saveWork } from '../services/works';
+import { toNianBoxError } from '../services/storage';
 import { displayTitle, type Idea } from '../types/idea';
 import { Button } from './Button';
 import { Icon } from './Icon';
@@ -32,14 +35,26 @@ const TEXT_MODES: ReadonlyArray<{ value: ShareCardTextMode; label: string }> = [
   { value: 'title', label: '只要标题' },
 ];
 
-export function ShareCardPanel({ idea }: { idea: Idea }) {
+export function ShareCardPanel({
+  idea,
+  /**
+   * 未登录 / 云端不可用时，这张卡片就是用户当下唯一能拿到的结果，
+   * 这里默认展开，省掉「还要再点一下」的一步。
+   */
+  defaultOpen = false,
+}: {
+  idea: Idea;
+  defaultOpen?: boolean;
+}) {
   const toast = useToast();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [mode, setMode] = useState<ShareCardTextMode>('content');
   const [aspect, setAspect] = useState<PosterAspect>('3:4');
   const [card, setCard] = useState<LocalPosterResult | null>(null);
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 这一次排版出来的图片有没有存进作品库；换文字 / 换比例后要重新保存。 */
+  const [saved, setSaved] = useState(false);
 
   const title = displayTitle(idea);
   const body = idea.content.trim();
@@ -49,6 +64,7 @@ export function ShareCardPanel({ idea }: { idea: Idea }) {
   const render = useCallback(async () => {
     setRendering(true);
     setError(null);
+    setSaved(false);
     try {
       const result = await renderLocalShareCard({ title, content: body, mode, aspect });
       setCard(result);
@@ -87,12 +103,32 @@ export function ShareCardPanel({ idea }: { idea: Idea }) {
     if (!card) return;
     const result = await sharePoster(card.dataUrl, fileName, sharedText);
     if (result === 'unsupported') {
-      toast.push({
-        message: '这台设备的浏览器不支持系统分享，可以先保存图片，再在微信或相册里分享。',
-        tone: 'info',
-      });
+      toast.push({ message: SHARE_UNSUPPORTED_MESSAGE, tone: 'info' });
     } else if (result === 'failed') {
       toast.push({ message: '分享没有完成，图片还在，可以再试一次。', tone: 'info' });
+    }
+  };
+
+  /**
+   * 存进本机作品库。
+   * 只有真正写进 IndexedDB 才提示成功；写不进去时如实说，并保留刚画好的图。
+   */
+  const handleSaveWork = async () => {
+    if (!card) return;
+    try {
+      await saveWork({
+        ideaId: idea.id,
+        source: 'card',
+        render: 'local',
+        style: 'card',
+        aspect,
+        title,
+        dataUrl: card.dataUrl,
+      });
+      setSaved(true);
+      toast.push({ message: '已经存进「我的作品」，以后随时能找回来。', tone: 'success' });
+    } catch (caught) {
+      toast.push({ message: toNianBoxError(caught).message, tone: 'error' });
     }
   };
 
@@ -112,6 +148,7 @@ export function ShareCardPanel({ idea }: { idea: Idea }) {
 
         <details
           className="nb-disclosure"
+          open={open}
           onToggle={(event) => setOpen(event.currentTarget.open)}
         >
           <summary className="nb-disclosure__summary">
@@ -187,6 +224,14 @@ export function ShareCardPanel({ idea }: { idea: Idea }) {
               </Button>
               {card && !rendering ? (
                 <>
+                  <Button
+                    variant="primary"
+                    icon="check"
+                    disabled={saved}
+                    onClick={() => void handleSaveWork()}
+                  >
+                    {saved ? '已保存到我的作品' : '保存到我的作品'}
+                  </Button>
                   <Button variant="primary" icon="download" onClick={handleDownload}>
                     保存图片
                   </Button>
@@ -199,6 +244,13 @@ export function ShareCardPanel({ idea }: { idea: Idea }) {
                 复制文字
               </Button>
             </div>
+
+            {saved ? (
+              <p className="nb-kv">
+                图片已经存在这台设备上，不会自动上传，也不会自动公开。换文字或换比例之后需要重新保存一次。
+                可以在首页的「最近作品」或者作品列表里再找到它。
+              </p>
+            ) : null}
           </div>
         </details>
       </div>
