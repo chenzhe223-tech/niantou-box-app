@@ -31,7 +31,7 @@ export interface AiToolDialogProps {
   open: boolean;
   ideas: Idea[];
   /** 入口来源，用于统计哪里的「交给 AI」更常被用到。 */
-  source: 'inbox' | 'idea_detail';
+  source: 'home' | 'inbox' | 'idea_detail';
   onClose: () => void;
 }
 
