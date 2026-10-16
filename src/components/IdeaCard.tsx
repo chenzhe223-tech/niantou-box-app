@@ -19,6 +19,11 @@ export interface IdeaCardProps {
   onOpen: () => void;
   onTogglePin: (idea: Idea) => void;
   onRequestDelete: (idea: Idea) => void;
+  /**
+   * 直接为这条念头生成图片（PRD 4.1 要求的「每条念头的操作区域」入口）。
+   * 可选：不传就不显示这个按钮，避免影响还没接入生图的调用点。
+   */
+  onGeneratePoster?: (idea: Idea) => void;
   busy?: boolean;
   /**
    * 这条记录是否还没同步到云端（登录后仍留在本机待同步队列里）。
@@ -42,6 +47,7 @@ export function IdeaCard({
   onOpen,
   onTogglePin,
   onRequestDelete,
+  onGeneratePoster,
   busy = false,
   pending = false,
   selectable = false,
@@ -106,6 +112,17 @@ export function IdeaCard({
 
       <div className="nb-idea__foot">
         <span className="nb-idea__actions">
+          {onGeneratePoster ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="image"
+              disabled={busy}
+              onClick={() => onGeneratePoster(idea)}
+            >
+              生成图片
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="ghost"
