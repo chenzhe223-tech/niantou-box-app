@@ -33,6 +33,29 @@ export type ProductForm = 'app' | 'website' | 'miniprogram' | 'skill' | 'other';
  */
 export type IdeaCategorySource = 'ai' | 'rules' | 'manual';
 
+/**
+ * 一件「作品」——目前只有灵感海报。
+ *
+ * 这里是 PRD 6.2「继续创作 / 回顾此前生成的结果」与后续「作品公开」预留的扩展点：
+ * 本轮**不写入任何数据**（没有任何代码会生成 works），只先把字段位置与校验规则定下来，
+ * 这样以后开始记录作品时，旧数据（没有这个字段）与新数据都能被安全读出。
+ *
+ * 范围说明：works 目前只在本机有意义 —— 服务端同步仍按既有字段白名单落库，
+ * 真要跨端回顾作品或对外公开，必须同步扩展服务端结构，不能只靠这个字段。
+ */
+export interface IdeaWork {
+  id: string;
+  /** 作品类型；本轮只有海报。 */
+  kind: 'poster';
+  /** 生成方式：'ai' = 图像模型生成；'local' = 本机 Canvas 绘制。 */
+  render: 'ai' | 'local';
+  style: string;
+  aspect: string;
+  /** 是否已公开；公开机制未实现，当前只允许 false。 */
+  public: boolean;
+  createdAt: number;
+}
+
 export interface Idea {
   id: string;
   /** 标题可选：留空时列表使用正文首句作为展示标题，不修改原文。 */
@@ -65,6 +88,11 @@ export interface Idea {
   updatedAt: number;
   /** 软删除时间；null 表示未删除。 */
   deletedAt: number | null;
+  /**
+   * 已生成的作品（可选，本轮不写入）。
+   * 缺省表示「从来没有记录过作品」，与空数组含义不同，因此不要补默认值。
+   */
+  works?: IdeaWork[];
 }
 
 /** 创建念头时的输入，只有正文是必填。 */
@@ -170,6 +198,23 @@ export function isIdeaStatus(value: unknown): value is IdeaStatus {
 export function isProductForm(value: unknown): value is ProductForm {
   return (
     typeof value === 'string' && PRODUCT_FORMS.some((item) => item.value === value)
+  );
+}
+
+/** 作品字段的兜底校验：只接受完整合法的条目，坏数据直接丢弃而不是照单全收。 */
+export function isIdeaWork(value: unknown): value is IdeaWork {
+  if (typeof value !== 'object' || value === null) return false;
+  const work = value as Partial<IdeaWork>;
+  return (
+    typeof work.id === 'string' &&
+    work.id !== '' &&
+    work.kind === 'poster' &&
+    (work.render === 'ai' || work.render === 'local') &&
+    typeof work.style === 'string' &&
+    typeof work.aspect === 'string' &&
+    typeof work.public === 'boolean' &&
+    typeof work.createdAt === 'number' &&
+    Number.isFinite(work.createdAt)
   );
 }
 
