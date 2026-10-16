@@ -13,7 +13,7 @@
  *   一律按服务端返回的能力与厂商名如实告知，未配置就说未配置。
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAppData } from '../app/AppDataProvider';
 import { paths } from '../app/routes';
 import { getOfficialSiteUrl } from '../app/siteConfig';
@@ -38,8 +38,9 @@ import {
   type DuplicateStrategy,
   type ValidationResult,
 } from '../services/backup';
-import { downloadBackup, pickJsonFile } from '../services/fileTransfer';
+import { downloadBackup, humanFileSize, pickJsonFile } from '../services/fileTransfer';
 import { clearAllData, toNianBoxError } from '../services/storage';
+import { listWorks } from '../services/works';
 
 const STRATEGY_OPTIONS: ReadonlyArray<{ value: DuplicateStrategy; label: string }> = [
   { value: 'skip', label: '保留现有数据，跳过相同 ID（推荐）' },
@@ -105,16 +106,38 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
 
   const backup = importSession?.validation.backup ?? null;
 
+  /**
+   * 本机已有的作品 ID 集合。
+   * 作品只存在本机，所以不在 AppData 里；只在真的要确认导入时读一次（只读元数据，很轻）。
+   */
+  const [localWorkIds, setLocalWorkIds] = useState<ReadonlySet<string>>(() => new Set<string>());
+  useEffect(() => {
+    if (!importSession) return;
+    let alive = true;
+    void listWorks()
+      .then((items) => {
+        if (alive) setLocalWorkIds(new Set(items.map((item) => item.id)));
+      })
+      .catch(() => {
+        // 读不到本机作品时宁可把冲突数报成 0，也不编一个数字出来。
+        if (alive) setLocalWorkIds(new Set<string>());
+      });
+    return () => {
+      alive = false;
+    };
+  }, [importSession]);
+
   /** 备份中与现有数据 ID 相同的记录数（用于导入前的冲突提示）。 */
   const conflicts = useMemo(() => {
-    if (!backup) return { ideas: 0, projects: 0 };
+    if (!backup) return { ideas: 0, projects: 0, works: 0 };
     const ideaIds = new Set(ideas.map((idea) => idea.id));
     const projectIds = new Set(projects.map((project) => project.id));
     return {
       ideas: backup.ideas.filter((idea) => ideaIds.has(idea.id)).length,
       projects: backup.projects.filter((project) => projectIds.has(project.id)).length,
+      works: backup.works.filter((work) => localWorkIds.has(work.id)).length,
     };
-  }, [backup, ideas, projects]);
+  }, [backup, ideas, projects, localWorkIds]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -122,7 +145,7 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
       const result = await downloadBackup();
       track('backup_exported');
       toast.push({
-        message: `已导出 ${result.filename}（包含 ${result.ideaCount} 条念头、${result.projectCount} 个项目）。`,
+        message: `已导出 ${result.filename}（包含 ${result.ideaCount} 条念头、${result.projectCount} 个项目、${result.workCount} 件作品，约 ${humanFileSize(result.sizeBytes)}）。`,
         tone: 'success',
       });
     } catch (caught) {
@@ -143,7 +166,11 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         toast.push({ message: '导入已取消：备份文件校验未通过。', tone: 'error' });
         return;
       }
-      if (validation.backup.ideas.length === 0 && validation.backup.projects.length === 0) {
+      if (
+        validation.backup.ideas.length === 0 &&
+        validation.backup.projects.length === 0 &&
+        validation.backup.works.length === 0
+      ) {
         toast.push({ message: '这个备份文件里没有可导入的记录。', tone: 'info' });
         return;
       }
@@ -432,7 +459,9 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         </div>
         <div className="nb-card nb-card--pad nb-stack">
           <p className="nb-kv">
-            导出文件为 JSON 格式，包含格式版本号、导出时间、全部念头与项目（含回收站记录），可以重新导入恢复。
+            导出文件为 JSON 格式，包含格式版本号、导出时间、全部念头与项目（含回收站记录），
+            以及本机作品的元数据与图片。作品图片始终只在这台设备与本机导出的文件之间流转，
+            不会因为备份而上传到任何服务器；导入时也一并恢复，不会出现「说恢复成功但图片丢了」。
           </p>
           <div className="nb-actionbar">
             <Button
@@ -492,7 +521,7 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         </div>
         <div className="nb-card nb-card--pad nb-stack nb-danger-zone">
           <p className="nb-kv">
-            清空会删除这台设备上的全部念头与项目，且无法撤销。建议先导出备份。
+            清空会删除这台设备上的全部念头、项目与本机作品（含作品图片），且无法撤销。建议先导出备份。
           </p>
           <div className="nb-actionbar">
             <Button variant="danger" icon="trash" onClick={() => setConfirmClear(true)}>
@@ -577,11 +606,13 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
                 包含 {backup.ideas.length} 条念头（其中回收站{' '}
                 {backup.ideas.filter((idea) => idea.deletedAt !== null).length} 条）、
                 {backup.projects.length} 个项目（其中回收站{' '}
-                {backup.projects.filter((project) => project.deletedAt !== null).length} 个）。
+                {backup.projects.filter((project) => project.deletedAt !== null).length} 个）、
+                {backup.works.length} 件本机作品（其中 {backup.counts.deletedWorks} 件的念头在回收站里），
+                含 {backup.workImages.length} 张作品图片。
               </p>
               <p>
-                与本机重复的 ID：{conflicts.ideas} 条念头、{conflicts.projects} 个项目。
-                现有数据不会被直接覆盖。
+                与本机重复的 ID：{conflicts.ideas} 条念头、{conflicts.projects} 个项目、
+                {conflicts.works} 件作品。现有数据不会被直接覆盖。
               </p>
               <SelectField
                 label="重复记录处理方式"
@@ -609,8 +640,8 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         busy={clearing}
         description={
           <p>
-            将永久删除本机上的 {counts.ideas} 条念头与 {counts.projects} 个项目（含回收站记录），
-            此操作无法撤销，也无法通过导入找回。确定要继续吗？
+            将永久删除本机上的 {counts.ideas} 条念头、{counts.projects} 个项目与全部本机作品
+            （含作品图片与回收站记录），此操作无法撤销，也无法通过导入找回。确定要继续吗？
           </p>
         }
         onCancel={() => setConfirmClear(false)}
