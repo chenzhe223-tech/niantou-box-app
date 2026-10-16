@@ -298,9 +298,14 @@ describe('设置与备份', () => {
         format: string;
         version: number;
         ideas: Array<{ content: string }>;
+        works: Array<{ id: string }>;
+        workImages: Array<{ workId: string }>;
       };
       expect(parsed.format).toBe('nianbox-backup');
-      expect(parsed.version).toBe(1);
+      // 2.2：备份格式升到 v2，导出里同时带上作品元数据与作品图片。
+      expect(parsed.version).toBe(2);
+      expect(Array.isArray(parsed.works)).toBe(true);
+      expect(Array.isArray(parsed.workImages)).toBe(true);
       expect(parsed.ideas.map((item) => item.content)).toContain('导出测试的念头');
 
       // 导出成功后给出明确反馈。
@@ -384,14 +389,19 @@ describe('首次使用：保存成功之后的下一步', () => {
         within(panel).getByText('生成图片会先把念头抽象成主题与意象，默认不把原文交给图像模型。'),
       ).toBeInTheDocument();
     } else {
-      // 不可用时必须写明原因，并给出可执行的去处，而不是一个点不动的按钮。
+      // 不可用时必须写明「AI 能力为什么用不了」，并把本机卡片讲成可直接使用的替代路径。
+      expect(
+        within(panel).getByText(/AI 增强生图需要云端配置、登录状态和可用的服务端模型/),
+      ).toBeInTheDocument();
       expect(
         within(panel).getByText(
-          sync.configured
-            ? 'AI 增强生图需要先登录云端账号（用来确认这些念头属于你）；不登录也可以直接制作本机念头卡片。'
-            : '这个构建没有配置云端地址，AI 增强生图暂时不可用；不登录也可以直接制作本机念头卡片。',
+          sync.configured ? /还没有登录云端账号/ : /这个构建没有配置云端地址/,
         ),
       ).toBeInTheDocument();
+      expect(
+        within(panel).getByText(/不登录也能在这台设备上直接制作本机念头卡片/),
+      ).toBeInTheDocument();
+      // 「查看云端同步」只是可选入口，不是制作本机卡片的必经步骤。
       expect(within(panel).getByRole('button', { name: '去云端同步页' })).toBeInTheDocument();
     }
   });
