@@ -1,27 +1,34 @@
 /**
- * 首页 —— 随手记。
+ * 首页 —— 此刻，你想到了什么？
  *
- * 目标：打开网页即可输入。
- * - 输入框占据视觉中心，不需要先写标题、选分类；
- * - 保存成功才提示成功，写入失败时给出真实错误并保留输入内容；
- * - 未保存内容会在本地留一份草稿，刷新后可恢复（保存成功后静默清除）。
+ * 首屏只做一件事：把一句话记下来。其余能力排在次级区域。
+ *
+ * 三条不许违反的规矩：
+ * 1. 打开页面就能输入，不前置登录、不前置配置、不前置分类；
+ * 2. 只有真正写进数据库才提示成功，写入失败时保留输入并说明原因；
+ * 3. 「生成图片」「交给 AI」这类外部能力，可用与否都如实写出来，
+ *    不可用时给出去哪里的指引，不做假的成功提示。
  */
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { useAppData } from '../app/AppDataProvider';
 import { paths } from '../app/routes';
-import { IdeaCard } from '../components/IdeaCard';
+import { AiToolDialog } from '../components/AiToolDialog';
 import { Button } from '../components/Button';
-import { TextArea } from '../components/Fields';
 import { EmptyState } from '../components/EmptyState';
+import { TextArea } from '../components/Fields';
+import { IdeaCard } from '../components/IdeaCard';
+import { Icon } from '../components/Icon';
 import { useToast } from '../components/Toast';
 import { useDraft } from '../hooks/useDraft';
 import { useNow } from '../hooks/useNow';
 import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
 import { classifyIdeaInBackground, trackClassifyOutcome } from '../services/aiClassify';
+import { copyText, shareText } from '../services/aiTools';
 import { createIdea, setIdeaPinned, softDeleteIdea, toNianBoxError } from '../services/storage';
 import {
   IDEA_CATEGORIES,
+  displayTitle,
   hasSavableContent,
   type Idea,
   type IdeaCategory,
@@ -35,6 +42,7 @@ const CATEGORY_CHOICES: ReadonlyArray<{ value: CategoryChoice; label: string }> 
 ];
 
 const PLACEHOLDER = '比如：为什么每次停车时，我明明知道停车场位置，却总是找不到空车位？';
+const COMPOSER_ID = 'nb-home-composer';
 
 export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const { ideas, projects } = useAppData();
@@ -47,6 +55,10 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** 刚保存成功的那条念头：用来展示「下一步能做什么」。 */
+  const [savedIdea, setSavedIdea] = useState<Idea | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiIdeas, setAiIdeas] = useState<Idea[]>([]);
 
   const activeIdeas = useMemo(
     () => ideas.filter((idea) => idea.deletedAt === null),
@@ -71,14 +83,28 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
     return map;
   }, [activeProjects]);
 
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (saving) return;
+  /** 生图走服务端，先决条件是「配了云端地址」且「已登录」。两者都要如实说明。 */
+  const posterReady = sync.configured && sync.signedIn;
+  const posterBlockedReason = !sync.configured
+    ? '这个构建没有配置云端地址，生成图片暂时不可用。'
+    : !sync.signedIn
+      ? '生成图片需要先登录云端账号（用来确认这些念头属于你）。'
+      : '';
+
+  /**
+   * 把输入框里的内容真正写进数据库。
+   *
+   * 成功返回写入的那条念头（调用方可以继续做下一步），失败返回 null 并保留输入。
+   * 所有入口（保存 / 生成图片 / 交给 AI）都走这一个函数，避免出现
+   * 「界面上说存好了、数据库里其实没有」这种不一致。
+   */
+  const persistDraft = async (): Promise<Idea | null> => {
+    if (saving) return null;
 
     const content = draft.value;
     if (!hasSavableContent(content)) {
       setError('先写下一句话，再收进念头盒。');
-      return;
+      return null;
     }
 
     setSaving(true);
@@ -100,12 +126,74 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
       classifyIdeaInBackground(created.id, {
         onDone: (outcome) => trackClassifyOutcome(outcome, 'home'),
       });
+      return created;
     } catch (caught) {
       const message = toNianBoxError(caught).message;
       setError(message);
       toast.push({ message: `没有保存成功：${message}`, tone: 'error' });
+      return null;
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const created = await persistDraft();
+    if (created) setSavedIdea(created);
+  };
+
+  /** 首页辅助入口 1：先存好，再直接把这条念头变成图片。 */
+  const handleQuickPoster = async () => {
+    if (!hasSavableContent(draft.value)) {
+      toast.push({
+        message: '先写下一句话，或从下面的最近念头里挑一条再生成图片。',
+        tone: 'info',
+      });
+      return;
+    }
+    const created = await persistDraft();
+    if (!created) return;
+    setSavedIdea(created);
+    navigate(paths.poster(created.id));
+  };
+
+  /** 首页辅助入口 2：先存好，再把这条念头交给 AI 工具整理。 */
+  const handleQuickAi = async () => {
+    if (!hasSavableContent(draft.value)) {
+      const target = recent[0];
+      if (!target) {
+        toast.push({ message: '先写下一句话，再交给 AI 整理。', tone: 'info' });
+        return;
+      }
+      setAiIdeas([target]);
+      setAiOpen(true);
+      return;
+    }
+    const created = await persistDraft();
+    if (!created) return;
+    setSavedIdea(created);
+    setAiIdeas([created]);
+    setAiOpen(true);
+  };
+
+  const handleCopySaved = async () => {
+    if (!savedIdea) return;
+    const ok = await copyText(savedIdea.content);
+    toast.push(
+      ok
+        ? { message: '内容已复制，可以粘贴到任何地方。', tone: 'success' }
+        : { message: '复制没有成功，可以手动选中内容后复制。', tone: 'error' },
+    );
+  };
+
+  const handleShareSaved = async () => {
+    if (!savedIdea) return;
+    const result = await shareText('念头盒 · 一条新念头', savedIdea.content);
+    if (result === 'unsupported') {
+      toast.push({ message: '这台设备的浏览器不支持系统分享，可以先复制内容。', tone: 'info' });
+    } else if (result === 'failed') {
+      toast.push({ message: '分享没有完成，内容还在，可以再试一次。', tone: 'info' });
     }
   };
 
@@ -135,13 +223,14 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   return (
     <div className="nb-page">
       <div className="nb-hero">
-        <h1 className="nb-hero__title">念头盒</h1>
+        <h1 className="nb-hero__title">此刻，你想到了什么？</h1>
         <p className="nb-hero__sub">每个好想法，都值得留下。</p>
       </div>
 
       <form className="nb-composer" onSubmit={handleSubmit} noValidate>
         <TextArea
-          label="现在有什么新念头？"
+          id={COMPOSER_ID}
+          label="记下一句话就好……"
           value={draft.value}
           onChange={(next) => {
             draft.setValue(next);
@@ -170,34 +259,197 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
           </div>
         ) : null}
 
-        <div>
-          <p className="nb-composer__meta" id="nb-home-category-label">
-            <span>分类（可以跳过）</span>
-          </p>
-          <div className="nb-chips" role="group" aria-labelledby="nb-home-category-label">
-            {CATEGORY_CHOICES.map((choice) => (
-              <button
-                key={choice.value}
-                type="button"
-                className={
-                  choice.value === category ? 'nb-chip nb-chip--active' : 'nb-chip'
-                }
-                aria-pressed={choice.value === category}
-                onClick={() => setCategory(choice.value)}
-              >
-                {choice.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="nb-composer__actions">
           <Button type="submit" variant="primary" icon="plus" disabled={saving}>
             {saving ? '正在保存…' : '记下这个念头'}
           </Button>
         </div>
+
+        <div className="nb-quickstart">
+          <p className="nb-quickstart__title">记下来之后，还可以马上：</p>
+          <div className="nb-quickstart__row">
+            <Button
+              variant="secondary"
+              icon="image"
+              disabled={saving}
+              onClick={() => {
+                void handleQuickPoster();
+              }}
+            >
+              一键生成图片
+            </Button>
+            <Button
+              variant="secondary"
+              icon="wand"
+              disabled={saving}
+              onClick={() => {
+                void handleQuickAi();
+              }}
+            >
+              让 AI 帮我整理
+            </Button>
+          </div>
+          <p className="nb-quickstart__note">
+            {posterReady
+              ? '这两个入口都会先把这句话原样存好，再继续下一步；生成失败也不会影响已经存下的内容。'
+              : `生成图片：${posterBlockedReason}`}
+          </p>
+        </div>
+
+        <details className="nb-disclosure">
+          <summary className="nb-disclosure__summary">
+            <span>分类（可以跳过，之后也能改）</span>
+            <span className="nb-disclosure__chevron" aria-hidden="true">
+              <Icon name="chevron" size={18} />
+            </span>
+          </summary>
+          <div className="nb-disclosure__body">
+            <div className="nb-chips" role="group" aria-label="给这条念头选一个分类">
+              {CATEGORY_CHOICES.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  className={choice.value === category ? 'nb-chip nb-chip--active' : 'nb-chip'}
+                  aria-pressed={choice.value === category}
+                  onClick={() => setCategory(choice.value)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </details>
       </form>
 
+      {/* --------------------------------------------------- 保存成功后的下一步 */}
+      {savedIdea ? (
+        <section className="nb-card nb-card--pad nb-saved" aria-labelledby="nb-home-saved">
+          <div className="nb-saved__head">
+            <span className="nb-saved__badge">
+              <Icon name="check" size={16} />
+            </span>
+            <div className="nb-saved__text">
+              <h2 className="nb-saved__title" id="nb-home-saved">
+                已经收好了。接下来想做什么？
+              </h2>
+              <p className="nb-saved__preview">{displayTitle(savedIdea)}</p>
+            </div>
+          </div>
+
+          <div className="nb-actionbar">
+            <Button
+              variant="primary"
+              icon="image"
+              disabled={!posterReady}
+              onClick={() => navigate(paths.poster(savedIdea.id))}
+            >
+              把它变成图片
+            </Button>
+            <Button
+              variant="secondary"
+              icon="wand"
+              onClick={() => {
+                setAiIdeas([savedIdea]);
+                setAiOpen(true);
+              }}
+            >
+              AI 整理
+            </Button>
+            <Button
+              variant="ghost"
+              icon="upload"
+              onClick={() => {
+                void handleCopySaved();
+              }}
+            >
+              复制内容
+            </Button>
+            <Button
+              variant="ghost"
+              icon="external"
+              onClick={() => {
+                void handleShareSaved();
+              }}
+            >
+              系统分享
+            </Button>
+            <Button
+              variant="ghost"
+              icon="plus"
+              onClick={() => {
+                setSavedIdea(null);
+                document.getElementById(COMPOSER_ID)?.focus();
+              }}
+            >
+              继续记录
+            </Button>
+          </div>
+
+          {!posterReady ? (
+            <p className="nb-saved__note">
+              {posterBlockedReason}
+              <button
+                type="button"
+                className="nb-link nb-link--button"
+                onClick={() => navigate(paths.cloud)}
+              >
+                去云端同步页
+              </button>
+            </p>
+          ) : (
+            <p className="nb-saved__note">
+              生成图片会先把念头抽象成主题与意象，默认不把原文交给图像模型。
+            </p>
+          )}
+        </section>
+      ) : null}
+
+      <section className="nb-section" aria-labelledby="nb-home-recent">
+        <div className="nb-section__head">
+          <h2 className="nb-section__title" id="nb-home-recent">
+            最近的念头
+          </h2>
+          {activeIdeas.length > 0 ? (
+            <button
+              type="button"
+              className="nb-link nb-link--button"
+              onClick={() => navigate(paths.inbox)}
+            >
+              重新看看以前的念头
+            </button>
+          ) : null}
+        </div>
+
+        {recent.length === 0 ? (
+          <EmptyState
+            title="这里还没有念头。"
+            description="留意生活中的小问题，它们可能是下一个作品的起点。"
+          />
+        ) : (
+          <ul className="nb-list">
+            {recent.map((idea) => (
+              <IdeaCard
+                key={idea.id}
+                idea={idea}
+                now={now}
+                busy={busyId === idea.id}
+                projectName={projectNameByIdeaId.get(idea.id) ?? null}
+                pending={isIdeaPending(sync, idea.id)}
+                onOpen={() => navigate(paths.idea(idea.id))}
+                onGeneratePoster={(target) => navigate(paths.poster(target.id))}
+                onTogglePin={(target) => {
+                  void handleTogglePin(target);
+                }}
+                onRequestDelete={(target) => {
+                  void handleDelete(target);
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ------------------------------------------------------------ 次级信息 */}
       <p className="nb-kv nb-kv--spaced">
         已记录 <strong>{activeIdeas.length}</strong> 条念头 · <strong>{activeProjects.length}</strong>{' '}
         个创意项目 ·{' '}
@@ -233,49 +485,12 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
         </p>
       )}
 
-      <section className="nb-section" aria-labelledby="nb-home-recent">
-        <div className="nb-section__head">
-          <h2 className="nb-section__title" id="nb-home-recent">
-            最近的念头
-          </h2>
-          {activeIdeas.length > 0 ? (
-            <button
-              type="button"
-              className="nb-link nb-link--button"
-              onClick={() => navigate(paths.inbox)}
-            >
-              查看全部
-            </button>
-          ) : null}
-        </div>
-
-        {recent.length === 0 ? (
-          <EmptyState
-            title="这里还没有念头。"
-            description="留意生活中的小问题，它们可能是下一个作品的起点。"
-          />
-        ) : (
-          <ul className="nb-list">
-            {recent.map((idea) => (
-              <IdeaCard
-                key={idea.id}
-                idea={idea}
-                now={now}
-                busy={busyId === idea.id}
-                projectName={projectNameByIdeaId.get(idea.id) ?? null}
-                pending={isIdeaPending(sync, idea.id)}
-                onOpen={() => navigate(paths.idea(idea.id))}
-                onTogglePin={(target) => {
-                  void handleTogglePin(target);
-                }}
-                onRequestDelete={(target) => {
-                  void handleDelete(target);
-                }}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+      <AiToolDialog
+        open={aiOpen}
+        ideas={aiIdeas}
+        source="home"
+        onClose={() => setAiOpen(false)}
+      />
     </div>
   );
 }
