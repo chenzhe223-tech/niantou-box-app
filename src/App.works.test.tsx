@@ -20,6 +20,8 @@ import { App } from './App';
 import { BRAND_STAR_PATH } from './components/BrandMark';
 import { CloudError, cloudRequest } from './services/cloud/cloudClient';
 import { resetCloudSyncForTests } from './services/cloud/cloudSync';
+import { resetWorkImageCacheForTests } from './hooks/useWorks';
+import { STORE_WORK_IMAGES, STORE_WORKS, putRecord } from './services/idb';
 import { SHARE_UNSUPPORTED_MESSAGE } from './services/poster';
 import { createIdea, getIdea, listIdeas } from './services/storage';
 import { listWorks, readWorkImage, saveWork } from './services/works';
@@ -58,6 +60,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // 作品图片缓存是模块级的：不清掉会跨用例串味。
+  resetWorkImageCacheForTests();
   resetCloudSyncForTests();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -337,5 +341,125 @@ describe('分享：只在用户确认之后发生', () => {
     // 分享的是用户已经确认过的那段文字，而不是悄悄附加的别的内容。
     const payload = shareSpy.mock.calls[0][0] as { text: string };
     expect(payload.text).toBe('没有确认就不该被分享出去');
+  });
+});
+
+describe('作品图片：按需读取，不把全部图片塞进内存', () => {
+  /** 只记录「从 workImages 表按 ID 读图」的动作；元数据用的是 getAll，不算在内。 */
+  function trackWorkImageReads() {
+    const ids: string[] = [];
+    const original = IDBObjectStore.prototype.get;
+    const spy = vi
+      .spyOn(IDBObjectStore.prototype, 'get')
+      .mockImplementation(function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+        if (this.name === STORE_WORK_IMAGES) ids.push(String(key));
+        return original.call(this, key);
+      });
+    return { ids, restore: () => spy.mockRestore() };
+  }
+
+  /** 直接写库：让 6 件作品的创建时间有明确先后，排序结果可预期。 */
+  async function seedWorks(ideaId: string, count: number): Promise<void> {
+    for (let index = 0; index < count; index += 1) {
+      const id = `work_seed_${index}`;
+      await putRecord(STORE_WORKS, {
+        id,
+        ideaId,
+        kind: 'poster',
+        source: 'card',
+        render: 'local',
+        style: 'card',
+        aspect: '3:4',
+        title: `作品 ${index}`,
+        createdAt: 1_000 + index,
+      });
+      await putRecord(STORE_WORK_IMAGES, {
+        workId: id,
+        mime: 'image/png',
+        dataUrl: STUB_DATA_URL,
+        bytes: 48,
+        createdAt: 1_000 + index,
+      });
+    }
+  }
+
+  it('首页有 6 件作品时，只把最近 4 件的图片读进内存', async () => {
+    const idea = await createIdea({ content: '作品很多时的首页' });
+    await seedWorks(idea.id, 6);
+
+    const tracker = trackWorkImageReads();
+    try {
+      renderApp('#/');
+
+      // 元数据仍然是全量读的：按钮如实显示一共有 6 件。
+      expect(await screen.findByRole('button', { name: '查看全部（6）' })).toBeInTheDocument();
+
+      await waitFor(() => {
+        // 只读了最近 4 件（work_seed_5 → work_seed_2），最旧的两件没进内存。
+        expect([...new Set(tracker.ids)].sort()).toEqual([
+          'work_seed_2',
+          'work_seed_3',
+          'work_seed_4',
+          'work_seed_5',
+        ]);
+      });
+      // 首页版面最多展示最近 3 件。
+      expect(screen.getByText('作品 5')).toBeInTheDocument();
+      expect(screen.queryByText('作品 2')).toBeNull();
+    } finally {
+      tracker.restore();
+    }
+  });
+
+  it('重新打开作品列表时，同一批图片不会再从库里读一遍', async () => {
+    const idea = await createIdea({ content: '重复读取检查' });
+    await seedWorks(idea.id, 3);
+
+    const tracker = trackWorkImageReads();
+    try {
+      const first = renderApp('#/works');
+      await screen.findByRole('heading', { level: 1, name: '我的作品' });
+      await waitFor(() =>
+        expect(screen.getAllByRole('button', { name: /预览作品：/ })).toHaveLength(3),
+      );
+      await waitFor(() => expect(new Set(tracker.ids).size).toBe(3));
+      first.unmount();
+
+      const readsAfterFirstOpen = tracker.ids.length;
+      const second = renderApp('#/works');
+      await screen.findByRole('heading', { level: 1, name: '我的作品' });
+      await waitFor(() =>
+        expect(screen.getAllByRole('button', { name: /预览作品：/ })).toHaveLength(3),
+      );
+
+      // 第二次打开一张新图都没读：命中了模块级图片缓存。
+      expect(tracker.ids.length).toBe(readsAfterFirstOpen);
+      second.unmount();
+    } finally {
+      tracker.restore();
+    }
+  });
+
+  it('图片真的缺失时如实提示，不用空白图掩盖', async () => {
+    const idea = await createIdea({ content: '只有元数据没有图', title: '缺图的这件作品' });
+    await putRecord(STORE_WORKS, {
+      id: 'work_no_image',
+      ideaId: idea.id,
+      kind: 'poster',
+      source: 'card',
+      render: 'local',
+      style: 'card',
+      aspect: '3:4',
+      title: '缺图的这件作品',
+      createdAt: 1_000,
+    });
+
+    renderApp('#/works');
+
+    expect(
+      await screen.findByRole('button', { name: '预览作品：缺图的这件作品' }),
+    ).toBeInTheDocument();
+    // 明确写出「图片数据缺失」，而不是留一个空白缩略图。
+    expect(await screen.findByText('图片数据缺失')).toBeInTheDocument();
   });
 });
