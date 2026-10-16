@@ -13,7 +13,7 @@
  *   - 坏数据用例断言的是「拒绝写入且什么都没留下」，确保不会留下损坏记录。
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   STORE_WORK_IMAGES,
   STORE_WORKS,
@@ -292,5 +292,45 @@ describe('数据库升级', () => {
     // 升级之后作品库能正常用。
     const work = await saveWork(cardInput('idea_legacy', { title: '升级后的第一件作品' }));
     expect(await readWorkImage(work.id)).toBe(DATA_URL);
+  });
+});
+
+describe('作品：图片按需读取', () => {
+  it('readWorkImages 只按传入的 ID 逐条取图，不整表扫描', async () => {
+    const idea = await createIdea({ content: '按需读图' });
+    const first = await saveWork(cardInput(idea.id, { title: '一' }));
+    const second = await saveWork(cardInput(idea.id, { title: '二' }));
+    // 第三件作品存在，但不该被读进内存。
+    await saveWork(cardInput(idea.id, { title: '三' }));
+
+    const getSpy = vi.spyOn(IDBObjectStore.prototype, 'get');
+    const getAllSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll');
+    try {
+      const images = await readWorkImages([first.id, second.id, 'work_missing']);
+      expect(images.size).toBe(2);
+      // 只发了 3 次按 ID 的取图请求（第 3 个 ID 不存在，拿不到就跳过）。
+      expect(getSpy).toHaveBeenCalledTimes(3);
+      // 关键：没有退化成整表 getAll。
+      expect(getAllSpy).not.toHaveBeenCalled();
+    } finally {
+      getSpy.mockRestore();
+      getAllSpy.mockRestore();
+    }
+  });
+
+  it('重复的 ID 只取一次，空数组不发起任何读取', async () => {
+    const idea = await createIdea({ content: '重复 ID' });
+    const work = await saveWork(cardInput(idea.id));
+
+    expect((await readWorkImages([])).size).toBe(0);
+
+    const getSpy = vi.spyOn(IDBObjectStore.prototype, 'get');
+    try {
+      const images = await readWorkImages([work.id, work.id, work.id]);
+      expect(images.size).toBe(1);
+      expect(getSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      getSpy.mockRestore();
+    }
   });
 });
