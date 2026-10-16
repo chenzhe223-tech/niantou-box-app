@@ -369,27 +369,27 @@ describe('首次使用：保存成功之后的下一步', () => {
     expect(within(panel).getByRole('button', { name: '继续记录' })).toBeInTheDocument();
 
     /**
-     * 生图走服务端，所以按钮能不能点完全取决于「这个构建配了云端地址没有」
-     * 与「登录了没有」。这里直接和同步快照对比，两种情况都断言，
-     * 避免把诚实的状态写成假通过。
+     * 生图入口**永远可点**：AI 增强生图要服务端，未登录 / 未配置云端时
+     * 会走「本机制作的念头卡片」这条路，不能因为云端的真实状态把用户挡在门口。
+     * 这里直接和同步快照对比，两种情况都断言，避免把诚实的状态写成假通过。
      */
     const sync = getCloudState();
-    const canGenerate = sync.configured && sync.signedIn;
+    const posterReady = sync.configured && sync.signedIn;
 
-    if (canGenerate) {
-      expect(poster).toBeEnabled();
+    expect(poster).toBeEnabled();
+
+    if (posterReady) {
       // 可用时也不能暗示「原文会直接进图像模型」。
       expect(
         within(panel).getByText('生成图片会先把念头抽象成主题与意象，默认不把原文交给图像模型。'),
       ).toBeInTheDocument();
     } else {
-      // 不可用时必须写明原因，并给出可执行的去处，而不是一个静默失效的按钮。
-      expect(poster).toBeDisabled();
+      // 不可用时必须写明原因，并给出可执行的去处，而不是一个点不动的按钮。
       expect(
         within(panel).getByText(
           sync.configured
-            ? '生成图片需要先登录云端账号（用来确认这些念头属于你）。'
-            : '这个构建没有配置云端地址，生成图片暂时不可用。',
+            ? 'AI 增强生图需要先登录云端账号（用来确认这些念头属于你）；不登录也可以直接制作本机念头卡片。'
+            : '这个构建没有配置云端地址，AI 增强生图暂时不可用；不登录也可以直接制作本机念头卡片。',
         ),
       ).toBeInTheDocument();
       expect(within(panel).getByRole('button', { name: '去云端同步页' })).toBeInTheDocument();
@@ -455,11 +455,18 @@ describe('首页首屏的创作入口', () => {
     ).toBeInTheDocument();
 
     // 生图页要么能真的生成，要么如实说明为什么不能；原文始终原样保留。
+    // 注意：不能生成时页面仍然给出「本机制作的念头卡片」，不会停在死路上。
     const sync = getCloudState();
     if (!sync.configured) {
       expect(await screen.findByText('这个构建没有配置云端地址')).toBeInTheDocument();
+      expect(
+        await screen.findByText('现在能做的是「本机制作的念头卡片」'),
+      ).toBeInTheDocument();
     } else if (!sync.signedIn) {
-      expect(await screen.findByText('需要先登录')).toBeInTheDocument();
+      expect(await screen.findByText('AI 增强生图需要先登录')).toBeInTheDocument();
+      expect(
+        await screen.findByText('现在能做的是「本机制作的念头卡片」'),
+      ).toBeInTheDocument();
     }
     expect((await getIdea(stored.id))?.content).toBe('车库入口的空位雷达');
   });
