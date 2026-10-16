@@ -15,6 +15,7 @@ import { ToastProvider } from './components/Toast';
 import { useHashRoute } from './hooks/useHashRoute';
 import { useCategoryBackfill } from './hooks/useCategoryBackfill';
 import { useCloudSync } from './hooks/useCloudSync';
+import { useKeyboardInset } from './hooks/useKeyboardInset';
 import { DeveloperPage } from './pages/DeveloperPage';
 import { CloudPage } from './pages/CloudPage';
 import { FeedbackPage } from './pages/FeedbackPage';
@@ -105,6 +106,9 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
   const { status, error, reload, ideas } = useAppData();
   const cloud = useCloudSync();
   const current = activeTab(route);
+
+  // 手机软键盘弹起时多留一段下边距，输入框与保存按钮不会被键盘挡住。
+  useKeyboardInset();
 
   // 登录之后，把迁移上来 / 官网快速记录进来的「未分类」念头补上分类。
   useCategoryBackfill(ideas, cloud.signedIn);
