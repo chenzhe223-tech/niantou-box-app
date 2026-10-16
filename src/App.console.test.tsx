@@ -92,7 +92,7 @@ describe('控制台与未处理异常', () => {
     const { user } = renderApp('#/');
 
     // 1. 首页记录一条念头。
-    const textarea = await screen.findByLabelText('现在有什么新念头？');
+    const textarea = await screen.findByLabelText('记下一句话就好……');
     await user.type(textarea, '控制台检查：车库没有实时空位提示');
     await user.click(screen.getByRole('button', { name: '记下这个念头' }));
     await screen.findByText('收好了，这个念头不会轻易丢失。');
@@ -149,7 +149,7 @@ describe('控制台与未处理异常', () => {
       window.location.hash = '#/完全未知的地址';
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
-    expect(await screen.findByRole('heading', { level: 1, name: '念头盒' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: '此刻，你想到了什么？' })).toBeInTheDocument();
 
     await expectCleanConsole();
   });
