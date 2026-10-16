@@ -49,6 +49,12 @@ import { matchesIdeaQuery, sortIdeas } from './query';
 import { track } from './analytics';
 import { publishLocalMutation } from './syncBus';
 import { emitChange, getChangeVersion, subscribeToChanges } from './changeBus';
+import {
+  normalizeWorkImage,
+  normalizeWorkRecord,
+  type WorkImageRecord,
+  type WorkRecord,
+} from './works';
 
 /**
  * 变更订阅：页面借此在数据变化后重新加载，避免各处自行轮询。
@@ -584,38 +590,87 @@ export async function purgeProject(id: string): Promise<void> {
 export interface RawSnapshot {
   ideas: Idea[];
   projects: Project[];
+  /** 本机作品元数据（含关联念头已进回收站的作品）。 */
+  works: WorkRecord[];
+  /** 本机作品图片：与作品元数据按 workId 对应，备份时原样带出。 */
+  workImages: WorkImageRecord[];
 }
 
 export async function readSnapshot(includeDeleted = true): Promise<RawSnapshot> {
-  const [rawIdeas, rawProjects] = await Promise.all([
+  const [rawIdeas, rawProjects, rawWorks, rawImages] = await Promise.all([
     readAll<Idea>(STORE_IDEAS),
     readAll<Project>(STORE_PROJECTS),
+    readAll<unknown>(STORE_WORKS),
+    readAll<unknown>(STORE_WORK_IMAGES),
   ]);
   const ideas = rawIdeas.map((item) => normalizeIdea(item));
   const projects = rawProjects.map((item) => normalizeProject(item));
+  // 作品与图片先经过各自的规范化，坏掉的单条记录被挡掉，不会污染备份文件。
+  const works = rawWorks
+    .map((item) => normalizeWorkRecord(item))
+    .filter((work): work is WorkRecord => work !== null);
+  const images = rawImages
+    .map((item) => normalizeWorkImage(item))
+    .filter((image): image is WorkImageRecord => image !== null);
+
+  if (includeDeleted) {
+    return { ideas, projects, works, workImages: images };
+  }
+
+  // 不含回收站时：连带把「关联念头在回收站里」的作品和它的图片一起排除，
+  // 避免调用方拿到一份指向已被过滤掉的念头的作品。
+  const deletedIdeaIds = new Set(
+    ideas.filter((idea) => idea.deletedAt !== null).map((idea) => idea.id),
+  );
+  const visibleWorks = works.filter((work) => !deletedIdeaIds.has(work.ideaId));
+  const visibleWorkIds = new Set(visibleWorks.map((work) => work.id));
   return {
-    ideas: includeDeleted ? ideas : ideas.filter((idea) => idea.deletedAt === null),
-    projects: includeDeleted ? projects : projects.filter((project) => project.deletedAt === null),
+    ideas: ideas.filter((idea) => idea.deletedAt === null),
+    projects: projects.filter((project) => project.deletedAt === null),
+    works: visibleWorks,
+    workImages: images.filter((image) => visibleWorkIds.has(image.workId)),
   };
 }
 
-/** 在单个事务内写入一批记录：全部成功或全部不生效。 */
+/**
+ * 在单个事务内写入一批记录：全部成功或全部不生效。
+ *
+ * 作品与作品图片也走这里（备份导入），因此四张表共用同一个事务：
+ * 只要有一条写失败，整批回滚 —— 不会出现「念头导入成功、作品图片丢了一半」。
+ */
 export async function writeRecords(
   ideas: readonly Idea[],
   projects: readonly Project[],
+  works: readonly WorkRecord[] = [],
+  workImages: readonly WorkImageRecord[] = [],
 ): Promise<void> {
-  if (ideas.length === 0 && projects.length === 0) return;
+  if (
+    ideas.length === 0 &&
+    projects.length === 0 &&
+    works.length === 0 &&
+    workImages.length === 0
+  ) {
+    return;
+  }
   await withTransaction(
-    { stores: [STORE_IDEAS, STORE_PROJECTS] },
+    { stores: [STORE_IDEAS, STORE_PROJECTS, STORE_WORKS, STORE_WORK_IMAGES] },
     'readwrite',
     async (tx) => {
       const ideaStore = tx.objectStore(STORE_IDEAS);
       const projectStore = tx.objectStore(STORE_PROJECTS);
+      const workStore = tx.objectStore(STORE_WORKS);
+      const imageStore = tx.objectStore(STORE_WORK_IMAGES);
       for (const idea of ideas) {
         await promisifyRequest(ideaStore.put(idea));
       }
       for (const project of projects) {
         await promisifyRequest(projectStore.put(project));
+      }
+      for (const work of works) {
+        await promisifyRequest(workStore.put(work));
+      }
+      for (const image of workImages) {
+        await promisifyRequest(imageStore.put(image));
       }
     },
   );
@@ -627,6 +682,7 @@ export async function writeRecords(
   for (const project of projects) {
     publishLocalMutation({ entity: 'project', id: project.id, op: 'upsert', doc: project });
   }
+  // 作品与图片刻意不进同步队列：作品只存在这台设备上，永不上传云端。
 }
 
 /**
