@@ -19,6 +19,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { SelectField, TagInputField, TextArea, TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
+import { ShareCardPanel } from '../components/ShareCardPanel';
 import { useToast } from '../components/Toast';
 import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
 import { classifyIdea, trackClassifyOutcome } from '../services/aiClassify';
@@ -466,7 +467,7 @@ export function IdeaDetailPage({
             <Button
               size="sm"
               variant="secondary"
-              icon="download"
+              icon="image"
               onClick={() => navigate(paths.poster(idea.id))}
             >
               生成灵感海报
@@ -478,6 +479,8 @@ export function IdeaDetailPage({
           </p>
         </div>
       </section>
+
+      <ShareCardPanel idea={idea} />
 
       <AiToolDialog
         open={aiOpen}
