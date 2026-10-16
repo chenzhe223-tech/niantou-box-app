@@ -653,6 +653,9 @@ v2 备份若含**关联念头不存在**的作品，会**跳过该作品并给�
 | **2.2 本轮**：全部自动化测试 | `pnpm test`（`vitest run`） | **15 个文件 / 285 个用例全部通过**，本轮新增 18 个：备份 v2（作品与图片）13 个、`readWorkImages(ids)` 按 ID 逐条读取 2 个、首页作品图片按需加载 3 个 |
 | **2.2 本轮**：生产构建（与 CI 同参数） | `BASE_PATH=/niantou-box-app/ VITE_CLOUD_ENDPOINT=… VITE_OFFICIAL_SITE_URL=… pnpm build` | 成功：`dist/index.html` 1.48 kB、`index-*.css` 32.73 kB、`index-*.js` 440.52 kB（gzip 131.76 kB）；CSS 哈希与 2.1 一致（本轮未改样式） |
 | **2.2 本轮**：备份格式与兼容性 | `src/types/backup.ts` / `src/services/backup.ts` | 导出格式版本升到 **v2**：新增 `works` / `workImages` / `counts`；v1 旧备份仍可导入（按空作品集处理），已有单测覆盖 |
+| **2.2 本轮**：线上部署 + 线上回归 | push `main` → Actions（typecheck + test + build + Pages） | **run #278 全绿**（head `b0803c96`，https://github.com/chenzhe223-tech/niantou-box-app/actions/runs/38888399791 ）；线上 `smoke-live` 25/25、`probe-live-21`、`verify-2.0-live` 全部通过，`e2e-app-live` 46/46 通过（真实模型：分类 / 抽象 / 生图 / 邮件 / 云端同步 / 数据隔离） |
+| **2.2 本轮**：线上产物内容抽查 | Node `fetch` 取回线上 `assets/index-*.js`（414 480 B） | 命中 2.2 新文案：`张作品图片`、`没有作品数据（旧版 v1 格式）`、`图片数据缺失` —— 说明 v2 备份与按需读图的代码确实进了线上产物 |
+| **2.2 本轮**：本地目录与远端逐字节比对 | `node work/sync-dir.mjs … --dry`（Git blob sha 比对） | **112 / 112 内容一致，0 变更** |
 
 **没有执行**（受环境限制，不做任何声称）：
 
@@ -660,10 +663,10 @@ v2 备份若含**关联念头不存在**的作品，会**跳过该作品并给�
   它能验证应用逻辑、数据读写与 DOM 结构，但**不能**替代真实浏览器的渲染、布局与滚动表现）；
 - iOS / Android / 鸿蒙真机验证；
 - Service Worker 的离线能力在真实浏览器中的表现（jsdom 不提供 Service Worker）；
-- **2.2 本轮真实手机 / 微信内置浏览器验证**：作品备份恢复、图片按需加载在真机上的内存与滚动表现**未验证**；README 中的相关结论来自 jsdom 测试与生产构建，**不能替代真实移动端验收**；
+- **2.2 本轮真实手机 / 微信内置浏览器验证**：作品备份恢复、图片按需加载在真机上的内存与滚动表现**未验证**；README 中的相关结论来自 jsdom 测试与生产构建，**不能替代真实移动端验收**。
 - 方案 A（同一站点 `/app/`）形态的实际部署（本项目采用方案 B，方案 A 只做了本地组装自检）。
 
-**已经执行**（应用本体部分）：GitHub Actions 的真实构建 + 测试 + Pages 发布（run 61 全绿）、方案 B 应用线上访问、
+**已经执行**（应用本体部分）：GitHub Actions 的真实构建 + 测试 + Pages 发布（本轮 run #278 全绿，head `b0803c96`）、方案 B 应用线上访问、
 官网 `app-config.js` 切换为 `live` 并完成对接，以及上表中「线上发布后」的 4 项线上实测。
 
 ---
