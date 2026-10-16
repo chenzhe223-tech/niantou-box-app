@@ -67,6 +67,36 @@ export interface SaveWorkInput {
 
 const DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,/i;
 
+/**
+ * 单张作品图片的大小上限（解码后的字节数）。
+ * 备份导入时用它挡住被撑爆或明显异常的文件：宁可明确报错，也不要让浏览器在解析时卡死。
+ */
+export const MAX_WORK_IMAGE_BYTES = 16 * 1024 * 1024;
+
+/** 是不是一张可保存的图片 data: URL。 */
+export function isImageDataUrl(value: unknown): value is string {
+  return typeof value === 'string' && DATA_URL_PATTERN.test(value);
+}
+
+/** 估算 data: URL 的二进制体积（备份校验与提示文案共用）。 */
+export function estimateImageBytes(dataUrl: string): number {
+  return approximateBytes(dataUrl);
+}
+
+/**
+ * 严格校验一条作品图片记录：格式、类型、大小都要过关。
+ * 只在「从备份文件恢复」这种不可信输入上用；本机自己写进去的图片用宽松校验即可。
+ */
+export function isWorkImageRecord(value: unknown): value is WorkImageRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const image = value as Partial<WorkImageRecord>;
+  if (typeof image.workId !== 'string' || image.workId === '') return false;
+  if (!isImageDataUrl(image.dataUrl)) return false;
+  if (typeof image.mime !== 'string' || !/^image\//i.test(image.mime)) return false;
+  if (typeof image.createdAt !== 'number' || !Number.isFinite(image.createdAt)) return false;
+  return estimateImageBytes(image.dataUrl) <= MAX_WORK_IMAGE_BYTES;
+}
+
 /** 宽松校验：只用来挡住明显坏掉的记录，正常写入的数据都满足。 */
 export function isWorkRecord(value: unknown): value is WorkRecord {
   if (typeof value !== 'object' || value === null) return false;
@@ -84,7 +114,8 @@ export function isWorkRecord(value: unknown): value is WorkRecord {
   );
 }
 
-function normalizeWork(raw: unknown): WorkRecord | null {
+/** 把一条来源不明的记录规范化成作品元数据；不合法时返回 null。 */
+export function normalizeWorkRecord(raw: unknown): WorkRecord | null {
   if (!isWorkRecord(raw)) return null;
   return {
     id: raw.id,
@@ -109,6 +140,31 @@ function approximateBytes(dataUrl: string): number {
   const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+/**
+ * 把一条来源不明的图片记录规范化。
+ * 宽松一些：只要 workId 与图片数据是真的，就照原样带出来（bytes / createdAt 缺失时补上），
+ * 这样导出备份时不会因为一个字段异常就悄悄丢掉用户的作品图片。
+ */
+export function normalizeWorkImage(raw: unknown): WorkImageRecord | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const image = raw as Partial<WorkImageRecord>;
+  if (typeof image.workId !== 'string' || image.workId === '') return null;
+  if (!isImageDataUrl(image.dataUrl)) return null;
+  return {
+    workId: image.workId,
+    mime: typeof image.mime === 'string' && image.mime ? image.mime : mimeOf(image.dataUrl),
+    dataUrl: image.dataUrl,
+    bytes:
+      typeof image.bytes === 'number' && Number.isFinite(image.bytes) && image.bytes >= 0
+        ? image.bytes
+        : approximateBytes(image.dataUrl),
+    createdAt:
+      typeof image.createdAt === 'number' && Number.isFinite(image.createdAt)
+        ? image.createdAt
+        : Date.now(),
+  };
 }
 
 /**
@@ -166,7 +222,7 @@ export async function saveWork(input: SaveWorkInput): Promise<WorkRecord> {
 export async function listWorks(): Promise<WorkRecord[]> {
   const raw = await readAll<unknown>(STORE_WORKS);
   return raw
-    .map((item) => normalizeWork(item))
+    .map((item) => normalizeWorkRecord(item))
     .filter((work): work is WorkRecord => work !== null)
     .sort((a, b) => b.createdAt - a.createdAt);
 }
@@ -177,7 +233,7 @@ export async function listWorksForIdea(ideaId: string): Promise<WorkRecord[]> {
 
 export async function getWork(id: string): Promise<WorkRecord | null> {
   const raw = await readOne<unknown>(STORE_WORKS, id);
-  return raw ? normalizeWork(raw) : null;
+  return raw ? normalizeWorkRecord(raw) : null;
 }
 
 /** 读作品图片（data: URL）。图片缺失时返回 null，界面据此提示而不是显示空白。 */
@@ -187,17 +243,24 @@ export async function readWorkImage(workId: string): Promise<string | null> {
   return raw.dataUrl;
 }
 
-/** 批量读图片，供列表页一次性取回（key = workId）。 */
+/**
+ * 批量读图片：**只按传入的 ID 逐条取**，不再整表扫描（key = workId）。
+ *
+ * 这是性能红线：一张图片可能几 MB，早期实现为了拿到几条记录会把整个
+ * workImages 表读进内存，作品一多首页就被拖慢。现在只读调用方明确要的那几条
+ * （首页只给最近 4 件），缺失的 ID 不进结果，由界面如实提示，不用空白图掩盖。
+ */
 export async function readWorkImages(ids: readonly string[]): Promise<Map<string, string>> {
-  const wanted = new Set(ids);
+  const wanted = new Set(ids.filter((id): id is string => typeof id === 'string' && id !== ''));
   const result = new Map<string, string>();
   if (wanted.size === 0) return result;
-  const raw = await readAll<WorkImageRecord>(STORE_WORK_IMAGES);
-  for (const item of raw) {
-    if (item && typeof item.workId === 'string' && wanted.has(item.workId)) {
-      if (typeof item.dataUrl === 'string' && item.dataUrl) result.set(item.workId, item.dataUrl);
+  await withTransaction({ stores: [STORE_WORK_IMAGES] }, 'readonly', async (tx) => {
+    const store = tx.objectStore(STORE_WORK_IMAGES);
+    for (const id of wanted) {
+      const raw = (await promisifyRequest(store.get(id))) as WorkImageRecord | undefined;
+      if (raw && typeof raw.dataUrl === 'string' && raw.dataUrl) result.set(id, raw.dataUrl);
     }
-  }
+  });
   return result;
 }
 
