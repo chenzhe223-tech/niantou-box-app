@@ -299,7 +299,7 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
           <Button size="sm" variant="secondary" icon="sparkle" onClick={handleBulkAi}>
             交给 AI
           </Button>
-          <Button size="sm" variant="secondary" icon="download" onClick={handleBulkPoster}>
+          <Button size="sm" variant="secondary" icon="image" onClick={handleBulkPoster}>
             生成海报
           </Button>
         </div>
@@ -345,6 +345,7 @@ export function InboxPage({ navigate }: { navigate: (hash: string) => void }) {
                 void handleTogglePin(target);
               }}
               onRequestDelete={(target) => setPendingDelete(target)}
+              onGeneratePoster={(target) => navigate(paths.poster(target.id))}
             />
           ))}
         </ul>
