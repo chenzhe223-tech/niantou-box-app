@@ -54,6 +54,9 @@ export const EVENT_NAMES = [
   'ai_tool_opened',
   'mail_handoff',
   'poster_used',
+  // 本机作品库
+  'work_saved',
+  'work_deleted',
 ] as const;
 
 export type AnalyticsEventName = (typeof EVENT_NAMES)[number];
@@ -72,6 +75,7 @@ const SOURCES = [
   'settings',
   'cloud',
   'dev',
+  'works',
 ] as const;
 
 /**
