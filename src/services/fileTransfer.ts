@@ -31,18 +31,44 @@ export interface DownloadedBackup {
   filename: string;
   ideaCount: number;
   projectCount: number;
+  /** 一并导出的本机作品件数（含关联念头在回收站里的作品）。 */
+  workCount: number;
+  /** 一并导出的作品图片张数。 */
+  imageCount: number;
+  /** 导出文件的大致体积（字节）。作品图片会让备份明显变大，提前说清楚。 */
+  sizeBytes: number;
 }
 
-/** 导出并下载备份文件，返回实际使用的文件名，便于界面提示。 */
+/** 导出并下载备份文件，返回实际使用的文件名与件数，便于界面如实提示。 */
 export async function downloadBackup(): Promise<DownloadedBackup> {
   const backup = await exportBackup();
   const filename = backupFileName(new Date());
-  downloadTextFile(filename, serializeBackup(backup));
+  const text = serializeBackup(backup);
+  downloadTextFile(filename, text);
   return {
     filename,
     ideaCount: backup.ideas.length,
     projectCount: backup.projects.length,
+    workCount: backup.works.length,
+    imageCount: backup.workImages.length,
+    // UTF-8 下用 Blob 量一次最接近实际落盘体积；环境不支持时退回字符数估算。
+    sizeBytes: estimateTextBytes(text),
   };
+}
+
+function estimateTextBytes(text: string): number {
+  try {
+    return new Blob([text]).size;
+  } catch {
+    return text.length;
+  }
+}
+
+/** 把字节数说成人话，用于导出 / 导入的提示文案。 */
+export function humanFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} 字节`;
 }
 
 export interface PickedFile {
