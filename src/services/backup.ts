@@ -5,11 +5,19 @@
  * - 导出的 JSON 自带格式版本号与导出时间，可被完整地重新导入；
  * - 导入前先严格校验，校验失败时给出可理解的错误，且绝不覆盖现有数据；
  * - 相同 ID 的记录有明确的冲突策略，默认保留现有数据，不静默丢失内容。
+ *
+ * 格式版本：
+ * - v1：念头 + 项目；
+ * - v2：追加本机作品元数据（works）与作品图片（workImages）。
+ *   v1 文件仍然可以导入，缺少的作品字段按「空作品集」处理；
+ *   作品图片始终只在本机 IndexedDB 里流转，备份只是让用户可以自己搬走，
+ *   过程中不会把图片上传到任何服务器。
  */
 
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
+  type BackupCounts,
   type BackupFile,
   type DuplicateStrategy,
   type ImportOptions,
@@ -18,6 +26,15 @@ import {
 } from '../types/backup';
 import type { Idea } from '../types/idea';
 import type { Project } from '../types/project';
+import {
+  MAX_WORK_IMAGE_BYTES,
+  estimateImageBytes,
+  isImageDataUrl,
+  normalizeWorkImage,
+  normalizeWorkRecord,
+  type WorkImageRecord,
+  type WorkRecord,
+} from './works';
 import {
   NianBoxError,
   createId,
@@ -41,26 +58,54 @@ export function backupFileName(date = new Date()): string {
   return `nianbox-backup-${year}-${month}-${day}.json`;
 }
 
-export function buildBackup(ideas: readonly Idea[], projects: readonly Project[]): BackupFile {
+/** 统计备份内容的条数（供导出提示与导入确认使用）。 */
+export function countBackup(
+  ideas: readonly Idea[],
+  projects: readonly Project[],
+  works: readonly WorkRecord[] = [],
+  workImages: readonly WorkImageRecord[] = [],
+): BackupCounts {
+  const deletedIdeaIds = new Set(
+    ideas.filter((idea) => idea.deletedAt !== null).map((idea) => idea.id),
+  );
+  const workIds = new Set(works.map((work) => work.id));
+  const imagesWithWork = new Set(
+    workImages.filter((image) => workIds.has(image.workId)).map((image) => image.workId),
+  );
+  return {
+    ideas: ideas.filter((idea) => idea.deletedAt === null).length,
+    projects: projects.filter((project) => project.deletedAt === null).length,
+    deletedIdeas: deletedIdeaIds.size,
+    deletedProjects: projects.filter((project) => project.deletedAt !== null).length,
+    works: works.length,
+    // 关联念头在回收站里的作品也会一起备份：念头恢复后作品还能继续创作。
+    deletedWorks: works.filter((work) => deletedIdeaIds.has(work.ideaId)).length,
+    workImages: imagesWithWork.size,
+  };
+}
+
+export function buildBackup(
+  ideas: readonly Idea[],
+  projects: readonly Project[],
+  works: readonly WorkRecord[] = [],
+  workImages: readonly WorkImageRecord[] = [],
+): BackupFile {
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     appVersion: APP_VERSION,
-    counts: {
-      ideas: ideas.filter((idea) => idea.deletedAt === null).length,
-      projects: projects.filter((project) => project.deletedAt === null).length,
-      deletedIdeas: ideas.filter((idea) => idea.deletedAt !== null).length,
-      deletedProjects: projects.filter((project) => project.deletedAt !== null).length,
-    },
+    counts: countBackup(ideas, projects, works, workImages),
     ideas: [...ideas],
     projects: [...projects],
+    works: [...works],
+    workImages: [...workImages],
   };
 }
 
 export async function exportBackup(): Promise<BackupFile> {
   const snapshot = await readSnapshot(true);
-  return buildBackup(snapshot.ideas, snapshot.projects);
+  return buildBackup(snapshot.ideas, snapshot.projects, snapshot.works, snapshot.workImages);
 }
 
 export function serializeBackup(backup: BackupFile): string {
@@ -80,9 +125,19 @@ function parseDate(value: unknown): number | null {
   return null;
 }
 
+/** 把字节数说成人话，用于错误提示。 */
+function humanBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} 字节`;
+}
+
 /**
  * 校验任意输入是否为可用的备份文件。
  * 返回规范化后的数据，同时收集警告。
+ *
+ * 校验是「全量先验」的：任何一条记录不合法都会让 ok=false，
+ * 调用方据此中止导入，不会出现只导入一半的结果。
  */
 export function validateBackup(input: unknown): ValidationResult {
   const errors: string[] = [];
@@ -113,6 +168,12 @@ export function validateBackup(input: unknown): ValidationResult {
   if (input.projects !== undefined && !Array.isArray(input.projects)) {
     errors.push('备份文件中的 projects 字段必须是数组。');
   }
+  if (input.works !== undefined && !Array.isArray(input.works)) {
+    errors.push('备份文件中的 works 字段必须是数组。');
+  }
+  if (input.workImages !== undefined && !Array.isArray(input.workImages)) {
+    errors.push('备份文件中的 workImages 字段必须是数组。');
+  }
   if (input.exportedAt !== undefined && parseDate(input.exportedAt) === null) {
     warnings.push('备份文件中的导出时间无法解析，导入时会忽略该字段。');
   }
@@ -123,6 +184,15 @@ export function validateBackup(input: unknown): ValidationResult {
 
   const rawIdeas = input.ideas as unknown[];
   const rawProjects = Array.isArray(input.projects) ? (input.projects as unknown[]) : [];
+  const rawWorks = Array.isArray(input.works) ? (input.works as unknown[]) : [];
+  const rawImages = Array.isArray(input.workImages) ? (input.workImages as unknown[]) : [];
+
+  if (input.works === undefined) {
+    // v1 文件（或任何缺少作品字段的文件）：按「空作品集」处理，导入后作品库保持现状。
+    warnings.push(
+      '这份备份文件里没有作品数据（旧版 v1 格式），导入后本机作品库不会被改动。',
+    );
+  }
 
   const ideas: Idea[] = [];
   const seenIdeaIds = new Set<string>();
@@ -220,6 +290,93 @@ export function validateBackup(input: unknown): ValidationResult {
     );
   });
 
+  /* ---------------------------------------------------------------------- */
+  /* 作品（v2）：元数据与图片分别校验，任何一处坏掉都不写入。                 */
+  /* ---------------------------------------------------------------------- */
+
+  const works: WorkRecord[] = [];
+  const seenWorkIds = new Set<string>();
+
+  rawWorks.forEach((raw, index) => {
+    if (!isPlainObject(raw)) {
+      errors.push(`第 ${index + 1} 件作品不是对象，无法导入。`);
+      return;
+    }
+    const work = normalizeWorkRecord(raw);
+    if (!work) {
+      errors.push(
+        `第 ${index + 1} 件作品的数据不完整或格式不对（需要作品 ID、关联念头 ID、类型与创建时间），无法导入。`,
+      );
+      return;
+    }
+    if (seenWorkIds.has(work.id)) {
+      errors.push(`备份文件中存在重复的作品 ID：${work.id}。`);
+      return;
+    }
+    if (!seenIdeaIds.has(work.ideaId)) {
+      // 明确警告并跳过：宁可少一件作品，也不能把图片挂到别的念头上。
+      warnings.push(
+        `作品 ${work.id} 关联的念头 ${work.ideaId} 不在备份文件中，已跳过该作品（不会改挂到别的念头上）。`,
+      );
+      return;
+    }
+    seenWorkIds.add(work.id);
+    works.push(work);
+  });
+
+  const workImages: WorkImageRecord[] = [];
+  const seenImageWorkIds = new Set<string>();
+
+  rawImages.forEach((raw, index) => {
+    if (!isPlainObject(raw)) {
+      errors.push(`第 ${index + 1} 条作品图片不是对象，无法导入。`);
+      return;
+    }
+    const workId = raw.workId;
+    if (typeof workId !== 'string' || workId === '') {
+      errors.push(`第 ${index + 1} 条作品图片缺少 workId，无法对应到作品。`);
+      return;
+    }
+    if (!seenWorkIds.has(workId)) {
+      warnings.push(`作品图片 ${workId} 在备份里找不到对应的作品，已跳过这张图片。`);
+      return;
+    }
+    if (seenImageWorkIds.has(workId)) {
+      errors.push(`作品 ${workId} 在备份里有重复的图片记录，无法判断该用哪一张。`);
+      return;
+    }
+    const dataUrl = raw.dataUrl;
+    if (!isImageDataUrl(dataUrl)) {
+      errors.push(`作品 ${workId} 的图片数据不是合法的图片（data: URL），已中止导入以免丢图。`);
+      return;
+    }
+    const bytes = estimateImageBytes(dataUrl);
+    if (bytes > MAX_WORK_IMAGE_BYTES) {
+      errors.push(
+        `作品 ${workId} 的图片（约 ${humanBytes(bytes)}）超过单张上限 ${humanBytes(MAX_WORK_IMAGE_BYTES)}，已中止导入。`,
+      );
+      return;
+    }
+    const image = normalizeWorkImage(raw);
+    if (!image) {
+      errors.push(`作品 ${workId} 的图片记录无法识别，已中止导入。`);
+      return;
+    }
+    seenImageWorkIds.add(workId);
+    workImages.push(image);
+  });
+
+  if (errors.length === 0) {
+    // 作品在、图片不在：明确告诉用户，不让「导入成功」掩盖图片缺失。
+    for (const work of works) {
+      if (!seenImageWorkIds.has(work.id)) {
+        warnings.push(
+          `作品 ${work.id} 在备份文件里没有图片数据，只恢复了记录（列表里会显示「图片数据缺失」）。`,
+        );
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors, warnings };
   }
@@ -232,14 +389,11 @@ export function validateBackup(input: unknown): ValidationResult {
         ? input.exportedAt
         : new Date().toISOString(),
     appVersion: typeof input.appVersion === 'string' ? input.appVersion : 'unknown',
-    counts: {
-      ideas: ideas.filter((idea) => idea.deletedAt === null).length,
-      projects: projects.filter((project) => project.deletedAt === null).length,
-      deletedIdeas: ideas.filter((idea) => idea.deletedAt !== null).length,
-      deletedProjects: projects.filter((project) => project.deletedAt !== null).length,
-    },
+    counts: countBackup(ideas, projects, works, workImages),
     ideas,
     projects,
+    works,
+    workImages,
   };
 
   return { ok: true, backup, errors, warnings };
@@ -287,6 +441,9 @@ export function parseBackup(text: string): ValidationResult {
 /**
  * 导入备份数据。默认策略为「保留现有数据，跳过同 ID 的记录」。
  * 整个过程要么完整写入，要么完全不改动现有数据。
+ *
+ * 作品与作品图片和念头、项目共用同一个写事务：任何一步失败都会整体回滚，
+ * 不会留下「念头进来了、图片没进来」的半截数据。
  */
 export async function importBackup(
   input: BackupFile | string | unknown,
@@ -306,6 +463,8 @@ export async function importBackup(
   const current = await readSnapshot(true);
   const existingIdeas = new Map(current.ideas.map((idea) => [idea.id, idea]));
   const existingProjects = new Map(current.projects.map((project) => [project.id, project]));
+  const existingWorks = new Map(current.works.map((work) => [work.id, work]));
+  const imageByBackupWorkId = new Map(backup.workImages.map((image) => [image.workId, image]));
 
   const report: ImportReport = {
     strategy,
@@ -317,6 +476,11 @@ export async function importBackup(
     projectsOverwritten: 0,
     projectsSkipped: 0,
     projectsDuplicated: 0,
+    worksImported: 0,
+    worksOverwritten: 0,
+    worksSkipped: 0,
+    worksDuplicated: 0,
+    imagesRestored: 0,
     warnings: [...validation.warnings],
   };
 
@@ -396,6 +560,45 @@ export async function importBackup(
     report.projectsImported += 1;
   }
 
+  const worksToWrite: WorkRecord[] = [];
+  const imagesToWrite: WorkImageRecord[] = [];
+
+  for (const work of backup.works) {
+    const mappedIdeaId = ideaIdMap.get(work.ideaId);
+    if (!mappedIdeaId) {
+      // 校验阶段已经挡过一轮；这里再保一道，确保作品永远不会悬空。
+      report.warnings.push(`作品 ${work.id} 关联的念头未能导入，已跳过该作品。`);
+      report.worksSkipped += 1;
+      continue;
+    }
+
+    const conflict = existingWorks.has(work.id);
+    if (conflict && strategy === 'skip') {
+      report.worksSkipped += 1;
+      continue;
+    }
+
+    const candidate: WorkRecord = { ...work, ideaId: mappedIdeaId };
+    let finalId = work.id;
+    if (conflict && strategy === 'overwrite') {
+      report.worksOverwritten += 1;
+    } else if (conflict) {
+      // duplicate：作品另存一件，图片跟着新 ID 走，绝不覆盖已有作品。
+      finalId = createId('work');
+      report.worksDuplicated += 1;
+    } else {
+      report.worksImported += 1;
+    }
+
+    worksToWrite.push(finalId === work.id ? candidate : { ...candidate, id: finalId });
+    const image = imageByBackupWorkId.get(work.id);
+    if (image) {
+      imagesToWrite.push(finalId === work.id ? image : { ...image, workId: finalId });
+    }
+  }
+
+  report.imagesRestored = imagesToWrite.length;
+
   // 让念头上的 projectId 与实际写入的项目保持一致。
   const projectByIdeaId = new Map<string, string>();
   for (const project of projectsToWrite) {
@@ -407,7 +610,7 @@ export async function importBackup(
   });
 
   try {
-    await writeRecords(linkedIdeas, projectsToWrite);
+    await writeRecords(linkedIdeas, projectsToWrite, worksToWrite, imagesToWrite);
   } catch (error) {
     throw toNianBoxError(error);
   }
@@ -428,7 +631,11 @@ export function describeReport(report: ImportReport): string {
   if (report.projectsOverwritten) parts.push(`覆盖 ${report.projectsOverwritten} 个项目`);
   if (report.projectsDuplicated) parts.push(`另存 ${report.projectsDuplicated} 个重复项目`);
   if (report.projectsSkipped) parts.push(`跳过 ${report.projectsSkipped} 个项目`);
+  if (report.worksImported) parts.push(`新增 ${report.worksImported} 件作品`);
+  if (report.worksOverwritten) parts.push(`覆盖 ${report.worksOverwritten} 件作品`);
+  if (report.worksDuplicated) parts.push(`另存 ${report.worksDuplicated} 件重复作品`);
+  if (report.worksSkipped) parts.push(`跳过 ${report.worksSkipped} 件已有作品`);
+  if (report.imagesRestored) parts.push(`恢复 ${report.imagesRestored} 张作品图片`);
   if (parts.length === 0) return '没有需要导入的记录。';
   return `导入完成：${parts.join('，')}。`;
 }
-
