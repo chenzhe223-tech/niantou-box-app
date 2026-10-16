@@ -17,6 +17,7 @@ export type Route =
   | { name: 'cloud' }
   | { name: 'poster'; id: string }
   | { name: 'posterTool' }
+  | { name: 'works' }
   | { name: 'dev' };
 
 export const paths = {
@@ -31,6 +32,7 @@ export const paths = {
   cloud: '#/cloud',
   poster: (id: string) => `#/poster/${encodeURIComponent(id)}`,
   posterTool: '#/poster',
+  works: '#/works',
   dev: '#/dev',
 } as const;
 
@@ -66,6 +68,8 @@ export function parseHash(hash: string): Route {
       return { name: 'cloud' };
     case 'feedback':
       return { name: 'feedback' };
+    case 'works':
+      return { name: 'works' };
     case 'dev':
       return { name: 'dev' };
     default:
@@ -98,6 +102,8 @@ export function routeToHash(route: Route): string {
       return paths.cloud;
     case 'feedback':
       return paths.feedback;
+    case 'works':
+      return paths.works;
     case 'dev':
       return paths.dev;
   }
