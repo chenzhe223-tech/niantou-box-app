@@ -22,6 +22,7 @@ import { paths } from '../app/routes';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { ShareCardPanel } from '../components/ShareCardPanel';
 import { useToast } from '../components/Toast';
 import { useCloudSync } from '../hooks/useCloudSync';
 import { track } from '../services/analytics';
@@ -30,6 +31,7 @@ import {
   POSTER_ASPECTS,
   PRIMARY_STYLE_ORDER,
   SECONDARY_STYLE_ORDER,
+  SHARE_UNSUPPORTED_MESSAGE,
   STYLE_TONE_LABEL,
   abstractionInput,
   applyBrandFooter,
@@ -283,7 +285,7 @@ export function PosterPage({
       '用念头盒把这条念头变成了一张灵感海报。',
     );
     if (result === 'unsupported') {
-      toast.push({ message: '这台设备的浏览器不支持系统分享，可以先保存图片再分享。', tone: 'info' });
+      toast.push({ message: SHARE_UNSUPPORTED_MESSAGE, tone: 'info' });
     } else if (result === 'failed') {
       toast.push({ message: '分享没有完成，图片还在，可以再试一次。', tone: 'info' });
     }
@@ -342,7 +344,10 @@ export function PosterPage({
       {!sync.configured ? (
         <div className="nb-notice nb-notice--warn">
           <p className="nb-notice__title">这个构建没有配置云端地址</p>
-          <p>抽象与图像生成都在服务端完成，没有云端地址时无法使用。可以去「云端同步」页查看接入方式。</p>
+          <p>
+            AI 增强生图（抽象 + 图像生成）都在服务端完成，没有云端地址时无法使用。这不影响下面：
+            你仍然可以立即制作「本机制作的念头卡片」。接入方式写在「云端同步」页。
+          </p>
           <div className="nb-actionbar">
             <Button size="sm" variant="secondary" onClick={() => navigate(paths.cloud)}>
               查看云端同步
@@ -351,8 +356,11 @@ export function PosterPage({
         </div>
       ) : !sync.signedIn ? (
         <div className="nb-notice nb-notice--warn">
-          <p className="nb-notice__title">需要先登录</p>
-          <p>生成图片会调用服务端，需要登录账号才能进行。登录只用来确认这些念头属于你。</p>
+          <p className="nb-notice__title">AI 增强生图需要先登录</p>
+          <p>
+            AI 增强生图会调用服务端模型，需要登录账号才能进行，登录只用来确认这些念头属于你。
+            不登录也能继续：下面可以直接制作「本机制作的念头卡片」，同样能保存图片和分享。
+          </p>
           <div className="nb-actionbar">
             <Button size="sm" variant="primary" onClick={() => navigate(paths.cloud)}>
               去登录
@@ -362,7 +370,7 @@ export function PosterPage({
       ) : null}
 
       {/* ------------------------------------------------ 从工具页进来时先选念头 */}
-      {usable && !ideaId ? (
+      {!ideaId ? (
         <section className="nb-section" aria-labelledby="nb-poster-pick">
           <div className="nb-section__head">
             <h2 className="nb-section__title" id="nb-poster-pick">
@@ -389,9 +397,31 @@ export function PosterPage({
                 </button>
               ))}
             </div>
-            <p className="nb-kv">点一条念头就会开始生成，不需要再点别的按钮。</p>
+            <p className="nb-kv">
+              {usable
+                ? '点一条念头就会开始生成，不需要再点别的按钮。'
+                : '点一条念头，就能在这台设备上把它排成一张卡片，不用登录。'}
+            </p>
           </div>
         </section>
+      ) : null}
+
+      {idea && !usable ? (
+        /**
+         * 未登录 / 没有云端地址时的路：不把用户挡在登录页前，
+         * 直接在本机把这条念头排成一张可保存、可分享的卡片。
+         * 这里只做本机 Canvas，不发任何网络请求，也不冒充 AI 绘图。
+         */
+        <>
+          <div className="nb-notice" role="status">
+            <p className="nb-notice__title">现在能做的是「本机制作的念头卡片」</p>
+            <p>
+              这不是 AI 绘图，也不会消耗任何模型额度：卡片在这台设备上用 Canvas 排版，不联网、不需要登录，
+              品牌星形与配色都来自念头盒自己的设计。AI 增强生图是另一种能力，登录后才可用。
+            </p>
+          </div>
+          <ShareCardPanel idea={idea} defaultOpen />
+        </>
       ) : null}
 
       {usable && idea ? (
@@ -695,11 +725,13 @@ export function PosterPage({
           </section>
         </>
       ) : (
-        <EmptyState
-          icon="sparkle"
-          title="先选一条念头"
-          description="从上面的列表里挑一条，再开始生成。"
-        />
+        usable ? (
+          <EmptyState
+            icon="sparkle"
+            title="先选一条念头"
+            description="从上面的列表里挑一条，再开始生成。"
+          />
+        ) : null
       )}
     </div>
   );
