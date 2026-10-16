@@ -9,10 +9,11 @@ export const DB_NAME = 'nianbox';
  *
  * v1 → v2：新增 feedback 表（用户主动提交的意见反馈）。
  * v2 → v3：新增 outbox 表（待同步到云端的本地变更队列）。
+ * v3 → v4：新增 works / workImages 两张表（本机作品库：作品元数据与图片分开存放）。
  * upgradeSchema 里每个建表语句都带 contains 守卫，因此老用户升级时
  * 已有表与数据不会被重建，只会补上缺的那张表。
  */
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export const STORE_IDEAS = 'ideas';
 export const STORE_PROJECTS = 'projects';
@@ -24,6 +25,13 @@ export const STORE_FEEDBACK = 'feedback';
  * 因此同一条记录连续改十次也只留一条，不会把队列撑爆。
  */
 export const STORE_OUTBOX = 'outbox';
+/**
+ * 本机作品（元数据）：作品 ID、关联念头、类型、生成方式、风格、比例、创建时间。
+ * 刻意与图片分开存放，列表页只读这一张表，不会把图片一起读进内存。
+ */
+export const STORE_WORKS = 'works';
+/** 本机作品图片：以 workId 为主键，与元数据同事务写入 / 删除。 */
+export const STORE_WORK_IMAGES = 'workImages';
 
 export interface MetaRecord {
   key: string;
@@ -75,6 +83,14 @@ function upgradeSchema(db: IDBDatabase): void {
   if (!db.objectStoreNames.contains(STORE_OUTBOX)) {
     const outbox = db.createObjectStore(STORE_OUTBOX, { keyPath: 'key' });
     outbox.createIndex('by_at', 'at');
+  }
+  if (!db.objectStoreNames.contains(STORE_WORKS)) {
+    const works = db.createObjectStore(STORE_WORKS, { keyPath: 'id' });
+    works.createIndex('by_ideaId', 'ideaId');
+    works.createIndex('by_createdAt', 'createdAt');
+  }
+  if (!db.objectStoreNames.contains(STORE_WORK_IMAGES)) {
+    db.createObjectStore(STORE_WORK_IMAGES, { keyPath: 'workId' });
   }
 }
 
