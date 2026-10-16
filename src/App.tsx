@@ -27,6 +27,7 @@ import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrashPage } from './pages/TrashPage';
+import { WorksPage } from './pages/WorksPage';
 
 /**
  * 底部导航的标签名。`none` 表示「当前页面不属于任何标签」
@@ -65,6 +66,9 @@ function activeTab(route: Route): TabName {
     case 'poster':
     case 'posterTool':
       return 'none';
+    // 我的作品是从首页进入的二级页面，不额外占用底部导航标签。
+    case 'works':
+      return 'none';
     case 'feedback':
     case 'dev':
       return 'none';
@@ -95,6 +99,8 @@ function RouteView({ route, navigate }: { route: Route; navigate: (hash: string)
       return <PosterPage key={route.id} ideaId={route.id} navigate={navigate} />;
     case 'posterTool':
       return <PosterPage key="poster-tool" ideaId={null} navigate={navigate} />;
+    case 'works':
+      return <WorksPage navigate={navigate} />;
     case 'feedback':
       return <FeedbackPage navigate={navigate} />;
     case 'dev':
