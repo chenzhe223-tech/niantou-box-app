@@ -80,6 +80,52 @@ export function getPosterStyle(id: PosterStyleId): PosterStyle {
   return POSTER_STYLES.find((style) => style.id === id) ?? POSTER_STYLES[0];
 }
 
+/**
+ * 首屏只展示这四类风格（PRD 4.3），其余风格收进「更多风格」。
+ *
+ * 映射关系（沿用原有 id，服务端白名单与新老数据都不需要改）：
+ * - 灵感海报   brand  适合一句话、人生感悟或新想法
+ * - 趣味插画   toy3d  适合生活趣事和奇思妙想
+ * - 情绪卡片   dream  适合表达感受、心情和日常片段
+ * - 创意概念图 future 适合 App 点子、产品构思和未来设想
+ */
+export const PRIMARY_STYLE_ORDER: ReadonlyArray<PosterStyleId> = [
+  'brand',
+  'toy3d',
+  'dream',
+  'future',
+];
+
+/** 「更多风格」：不放进首屏，避免一次给出太多选择。 */
+export const SECONDARY_STYLE_ORDER: ReadonlyArray<PosterStyleId> = ['minimal', 'journal'];
+
+/** 面向用户的风格分类名（PRD 四类 + 两个进阶风格）。 */
+export const STYLE_TONE_LABEL: Readonly<Record<PosterStyleId, string>> = {
+  brand: '灵感海报',
+  toy3d: '趣味插画',
+  dream: '情绪卡片',
+  future: '创意概念图',
+  minimal: '极简艺术',
+  journal: '手绘日记',
+};
+
+/**
+ * 默认风格由系统自动匹配 —— 普通用户不需要自己挑风格。
+ * 只按分类做映射，不读取任何正文内容。
+ */
+export function autoStyleFor(idea: { category: string | null }): PosterStyleId {
+  switch (idea.category) {
+    case 'app':
+    case 'web':
+    case 'skill':
+      return 'future';
+    case 'life':
+      return 'brand';
+    default:
+      return 'brand';
+  }
+}
+
 export const POSTER_ASPECTS: ReadonlyArray<{ value: PosterAspect; label: string; ratio: number }> = [
   { value: '3:4', label: '3:4 竖版', ratio: 3 / 4 },
   { value: '1:1', label: '1:1 方形', ratio: 1 },
@@ -467,6 +513,141 @@ export async function renderLocalPoster(options: {
   const nameSize = Math.round(width * 0.036);
   ctx.font = `600 ${nameSize}px ${readToken('--nb-font') || 'sans-serif'}`;
   ctx.fillText('念头盒 NianBox', width / 2 - width * 0.052, badgeY + nameSize * 0.36);
+  ctx.textAlign = 'center';
+
+  return { dataUrl: canvas.toDataURL('image/png'), width, height };
+}
+
+/** 分享卡片上放哪些文字：由用户决定，不用猜。 */
+export type ShareCardTextMode = 'title' | 'content';
+
+/**
+ * 把一条念头画成一张品牌分享卡片（本机 Canvas，不联网、不调用任何模型）。
+ *
+ * 与灵感海报的区别：
+ * - 灵感海报经过 AI 抽象，**不含原文**；
+ * - 分享卡片是用户自己决定把哪段文字放上去，用的是**原文**，
+ *   所以界面上必须先完整展示卡片内容，再由用户点保存 / 分享。
+ *
+ * 版式约束（对应 PRD 5.1）：文字区留出上下安全边距，品牌标识只占顶部一行
+ * 与底部一条细带，绝不压住用户的内容。
+ */
+export async function renderLocalShareCard(options: {
+  title: string;
+  content: string;
+  /** 'title' = 只放标题；'content' = 标题 + 正文。 */
+  mode: ShareCardTextMode;
+  aspect: PosterAspect;
+}): Promise<LocalPosterResult> {
+  const aspect = POSTER_ASPECTS.find((item) => item.value === options.aspect) ?? POSTER_ASPECTS[0];
+  const width = 1080;
+  const height = Math.round(width / aspect.ratio);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('这台设备的浏览器不支持 Canvas 绘制，无法在本机生成分享卡片。');
+  }
+
+  const fontFamily = readToken('--nb-font') || 'sans-serif';
+  const paper = readPaletteColor('--nb-surface', '--nb-bg');
+  const ink = readPaletteColor('--nb-ink', '--nb-accent');
+  const inkSoft = readPaletteColor('--nb-ink-soft', '--nb-ink');
+  const accent = readPaletteColor('--nb-accent', '--nb-ink');
+  const accentSoft = readPaletteColor('--nb-accent-soft', '--nb-bg');
+  const onAccent = readPaletteColor('--nb-star', '--nb-white');
+
+  ctx.fillStyle = paper;
+  ctx.fillRect(0, 0, width, height);
+
+  // 背景装饰：两枚淡紫圆形，颜色从语义变量取，不写死色值。
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = accentSoft;
+  ctx.beginPath();
+  ctx.arc(width * 0.9, height * 0.08, width * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(width * 0.06, height * 0.95, width * 0.24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  const padX = width * 0.105;
+  const footerHeight = Math.round(height * 0.075);
+  const headerHeight = Math.round(height * 0.13);
+  const contentTop = headerHeight;
+  const contentBottom = height - footerHeight - height * 0.04;
+
+  // 顶部品牌行（小号，先声但不抢内容）。
+  const markSize = width * 0.05;
+  drawStar(ctx, padX + markSize / 2, headerHeight * 0.52, markSize, accent);
+  const wordSize = Math.round(width * 0.032);
+  ctx.font = `600 ${wordSize}px ${fontFamily}`;
+  ctx.fillStyle = inkSoft;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('念头盒 NianBox', padX + markSize + width * 0.024, headerHeight * 0.52);
+
+  const maxTextWidth = width - padX * 2;
+  const title = options.title.trim();
+  const body = options.content.trim();
+
+  let cursorY = contentTop;
+  if (title && title !== body) {
+    const titleSize = Math.round(width * 0.058);
+    ctx.font = `700 ${titleSize}px ${fontFamily}`;
+    ctx.fillStyle = accent;
+    const titleLines = wrapText(ctx, title, maxTextWidth).slice(0, 3);
+    titleLines.forEach((line) => {
+      cursorY += titleSize * 1.3;
+      ctx.fillText(line, padX, cursorY);
+    });
+    cursorY += titleSize * 0.5;
+  }
+
+  if (options.mode === 'content' && body) {
+    const bodySize = Math.round(width * 0.038);
+    const lineHeight = bodySize * 1.62;
+    ctx.font = `500 ${bodySize}px ${fontFamily}`;
+    ctx.fillStyle = ink;
+    const available = Math.floor((contentBottom - cursorY) / lineHeight);
+    const wrapped = wrapText(ctx, body, maxTextWidth);
+    const maxLines = Math.max(available, 1);
+    const bodyLines = wrapped.slice(0, maxLines);
+    if (wrapped.length > maxLines) {
+      bodyLines[maxLines - 1] = `${bodyLines[maxLines - 1].slice(0, -1)}…`;
+    }
+    bodyLines.forEach((line, index) => {
+      ctx.fillText(line, padX, cursorY + lineHeight * (index + 1));
+    });
+  } else if (!title) {
+    // 只放正文、但正文被清空时，至少保证卡片不是空白的。
+    const bodySize = Math.round(width * 0.038);
+    ctx.font = `500 ${bodySize}px ${fontFamily}`;
+    ctx.fillStyle = ink;
+    wrapText(ctx, body || '（空）', maxTextWidth)
+      .slice(0, 6)
+      .forEach((line, index) => {
+        ctx.fillText(line, padX, cursorY + bodySize * 1.6 * (index + 1));
+      });
+  }
+
+  // 底部品牌细带：占 7.5%，压不到正文区。
+  ctx.fillStyle = accent;
+  ctx.fillRect(0, height - footerHeight, width, footerHeight);
+  const footMark = footerHeight * 0.5;
+  const footSize = Math.round(footerHeight * 0.36);
+  ctx.font = `600 ${footSize}px ${fontFamily}`;
+  const footText = '让每一个念头，都有机会成为现实';
+  const footTextWidth = ctx.measureText(footText).width;
+  const footGroup = footMark + width * 0.02 + footTextWidth;
+  const footLeft = (width - footGroup) / 2;
+  const footCenterY = height - footerHeight / 2;
+  drawStar(ctx, footLeft + footMark / 2, footCenterY, footMark, onAccent);
+  ctx.fillStyle = onAccent;
+  ctx.textAlign = 'left';
+  ctx.fillText(footText, footLeft + footMark + width * 0.02, footCenterY);
   ctx.textAlign = 'center';
 
   return { dataUrl: canvas.toDataURL('image/png'), width, height };
