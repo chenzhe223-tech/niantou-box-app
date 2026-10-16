@@ -33,6 +33,7 @@ import {
   isCategorySource,
   isIdeaCategory,
   isIdeaStatus,
+  isIdeaWork,
   isProductForm,
 } from '../types/idea';
 import {
@@ -161,6 +162,11 @@ export function normalizeIdea(raw: Partial<Idea> & { id: string }): Idea {
       raw.deletedAt === null || raw.deletedAt === undefined
         ? null
         : asTimestamp(raw.deletedAt, updatedAt),
+    /**
+     * 作品字段（本轮不写入任何数据）：坏条目直接丢弃，缺省时保持 undefined。
+     * 刻意不补空数组 —— 「从来没记录过作品」与「记录了 0 件作品」是两件事。
+     */
+    works: Array.isArray(raw.works) ? raw.works.filter(isIdeaWork) : undefined,
   };
 }
 
