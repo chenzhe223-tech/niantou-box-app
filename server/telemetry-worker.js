@@ -92,8 +92,11 @@ function asPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
-/** 只在白名单里的枚举参数才会入库，二次防御：即使前端白名单被改坏也不存内容。 */
-const ALLOWED_PROPS = ['source', 'status', 'progress', 'bucket', 'kind', 'result', 'state'];
+/**
+ * 只在白名单里的枚举参数才会入库，二次防御：即使前端白名单被改坏也不存内容。
+ * 'render' = 作品是 AI 生成还是本机绘制（work_saved 事件用），同样是枚举值。
+ */
+const ALLOWED_PROPS = ['source', 'status', 'progress', 'bucket', 'kind', 'result', 'state', 'render'];
 
 function sanitizeProps(props) {
   const source = asPlainObject(props);
