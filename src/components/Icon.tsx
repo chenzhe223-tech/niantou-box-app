@@ -18,6 +18,8 @@ export type IconName =
   | 'refresh'
   | 'external'
   | 'sparkle'
+  | 'image'
+  | 'wand'
   | 'chevron'
   | 'archive';
 
@@ -137,6 +139,20 @@ const ICONS: Record<IconName, ReactNode> = {
       <path d="M4.4 6.4h15.2v3.2H4.4z" />
       <path d="M5.6 9.6V19h12.8V9.6" />
       <path d="M10 13h4" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3.6" y="5.4" width="16.8" height="13.2" rx="2.4" />
+      <circle cx="9.2" cy="10.4" r="1.5" />
+      <path d="m5.4 17.6 4.4-4.2 3.2 3 2.9-2.5 3.7 3.3" />
+    </>
+  ),
+  wand: (
+    <>
+      <path d="M5.4 18.6 14.8 9.2" />
+      <path d="M16.6 3.6l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7z" />
+      <path d="M8.6 6.2l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z" />
     </>
   ),
 };
