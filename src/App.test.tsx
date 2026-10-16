@@ -10,6 +10,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { getCloudState } from './services/cloud/cloudSync';
 import { createIdea, getIdea, listIdeas, listProjects } from './services/storage';
 
 const RAW_CONTENT = [
@@ -31,9 +32,9 @@ describe('首页：随手记', () => {
   it('打开首页即可看到输入入口与首屏文案', async () => {
     renderApp();
 
-    expect(await screen.findByRole('heading', { level: 1, name: '念头盒' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: '此刻，你想到了什么？' })).toBeInTheDocument();
     expect(screen.getByText('每个好想法，都值得留下。')).toBeInTheDocument();
-    expect(screen.getByLabelText('现在有什么新念头？')).toBeInTheDocument();
+    expect(screen.getByLabelText('记下一句话就好……')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '记下这个念头' })).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText('比如：为什么每次停车时，我明明知道停车场位置，却总是找不到空车位？'),
@@ -44,7 +45,7 @@ describe('首页：随手记', () => {
 
   it('可以创建新念头，并真正写入本地数据库', async () => {
     const { user } = renderApp();
-    const textarea = await screen.findByLabelText('现在有什么新念头？');
+    const textarea = await screen.findByLabelText('记下一句话就好……');
 
     await user.type(textarea, '停车场总是找不到空车位');
     await user.click(screen.getByRole('button', { name: '记下这个念头' }));
@@ -61,18 +62,21 @@ describe('首页：随手记', () => {
     expect(stored[0].category).toBeNull();
 
     // 总数更新，且新内容出现在最近记录里。
+    // 注意：保存成功后「下一步」面板里也会出现同一段文字，所以这里按区域限定，
+    // 断言的是「它确实进了最近的念头」，而不是撞上别的区块。
     expect(
       screen.getByText(
         (_content, element) =>
           element?.tagName === 'P' && (element.textContent ?? '').includes('已记录 1 条念头'),
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('停车场总是找不到空车位')).toBeInTheDocument();
+    const recent = screen.getByRole('region', { name: '最近的念头' });
+    expect(within(recent).getByText('停车场总是找不到空车位')).toBeInTheDocument();
   });
 
   it('空内容不会被保存', async () => {
     const { user } = renderApp();
-    await screen.findByLabelText('现在有什么新念头？');
+    await screen.findByLabelText('记下一句话就好……');
 
     await user.click(screen.getByRole('button', { name: '记下这个念头' }));
 
@@ -82,7 +86,7 @@ describe('首页：随手记', () => {
 
   it('刷新页面后，已保存的念头仍然存在', async () => {
     const { user, unmount } = renderApp();
-    const textarea = await screen.findByLabelText('现在有什么新念头？');
+    const textarea = await screen.findByLabelText('记下一句话就好……');
     await user.type(textarea, '刷新之后我应该还在');
     await user.click(screen.getByRole('button', { name: '记下这个念头' }));
     await screen.findByText('收好了，这个念头不会轻易丢失。');
@@ -341,5 +345,131 @@ describe('异常状态', () => {
     } finally {
       if (descriptor) Object.defineProperty(window, 'indexedDB', descriptor);
     }
+  });
+});
+
+describe('首次使用：保存成功之后的下一步', () => {
+  it('保存成功后面板给出下一步，生图按钮的可点状态与云端真实状态一致', async () => {
+    const { user } = renderApp();
+    const textarea = await screen.findByLabelText('记下一句话就好……');
+
+    await user.type(textarea, '想做一个地铁换乘最短路径的小工具');
+    await user.click(screen.getByRole('button', { name: '记下这个念头' }));
+
+    // PRD 3.2：保存成功之后必须给出下一步，而不是只弹一个提示。
+    const panel = await screen.findByRole('region', {
+      name: '已经收好了。接下来想做什么？',
+    });
+    expect(within(panel).getByText('想做一个地铁换乘最短路径的小工具')).toBeInTheDocument();
+
+    const poster = within(panel).getByRole('button', { name: '把它变成图片' });
+    expect(within(panel).getByRole('button', { name: 'AI 整理' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: '复制内容' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: '系统分享' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: '继续记录' })).toBeInTheDocument();
+
+    /**
+     * 生图走服务端，所以按钮能不能点完全取决于「这个构建配了云端地址没有」
+     * 与「登录了没有」。这里直接和同步快照对比，两种情况都断言，
+     * 避免把诚实的状态写成假通过。
+     */
+    const sync = getCloudState();
+    const canGenerate = sync.configured && sync.signedIn;
+
+    if (canGenerate) {
+      expect(poster).toBeEnabled();
+      // 可用时也不能暗示「原文会直接进图像模型」。
+      expect(
+        within(panel).getByText('生成图片会先把念头抽象成主题与意象，默认不把原文交给图像模型。'),
+      ).toBeInTheDocument();
+    } else {
+      // 不可用时必须写明原因，并给出可执行的去处，而不是一个静默失效的按钮。
+      expect(poster).toBeDisabled();
+      expect(
+        within(panel).getByText(
+          sync.configured
+            ? '生成图片需要先登录云端账号（用来确认这些念头属于你）。'
+            : '这个构建没有配置云端地址，生成图片暂时不可用。',
+        ),
+      ).toBeInTheDocument();
+      expect(within(panel).getByRole('button', { name: '去云端同步页' })).toBeInTheDocument();
+    }
+  });
+
+  it('「继续记录」只是收起面板，不会删掉刚存下的念头', async () => {
+    const { user } = renderApp();
+    const textarea = await screen.findByLabelText('记下一句话就好……');
+    await user.type(textarea, '收起面板也不能丢内容');
+    await user.click(screen.getByRole('button', { name: '记下这个念头' }));
+
+    await screen.findByRole('region', { name: '已经收好了。接下来想做什么？' });
+    await user.click(screen.getByRole('button', { name: '继续记录' }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('region', { name: '已经收好了。接下来想做什么？' }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(await listIdeas()).toHaveLength(1);
+  });
+});
+
+describe('首页首屏的创作入口', () => {
+  it('首屏直接给出「一键生成图片」与「让 AI 帮我整理」两个入口', async () => {
+    renderApp();
+    await screen.findByLabelText('记下一句话就好……');
+
+    expect(screen.getByText('记下来之后，还可以马上：')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '一键生成图片' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '让 AI 帮我整理' })).toBeInTheDocument();
+  });
+
+  it('输入框为空时点生图只提示先写内容，不会产生任何记录', async () => {
+    const { user } = renderApp();
+    await screen.findByLabelText('记下一句话就好……');
+
+    await user.click(screen.getByRole('button', { name: '一键生成图片' }));
+
+    expect(
+      await screen.findByText('先写下一句话，或从下面的最近念头里挑一条再生成图片。'),
+    ).toBeInTheDocument();
+    expect(await listIdeas()).toHaveLength(0);
+  });
+
+  it('点「一键生成图片」会先把这句话原样存好，再进入生图页', async () => {
+    const { user } = renderApp();
+    const textarea = await screen.findByLabelText('记下一句话就好……');
+    await user.type(textarea, '车库入口的空位雷达');
+    await user.click(screen.getByRole('button', { name: '一键生成图片' }));
+
+    // 跳转必须建立在「原文已经真的写进数据库」之上。
+    const stored = await waitFor(async () => {
+      const list = await listIdeas();
+      expect(list).toHaveLength(1);
+      return list[0];
+    });
+    expect(stored.content).toBe('车库入口的空位雷达');
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '把这个念头变成图片' }),
+    ).toBeInTheDocument();
+
+    // 生图页要么能真的生成，要么如实说明为什么不能；原文始终原样保留。
+    const sync = getCloudState();
+    if (!sync.configured) {
+      expect(await screen.findByText('这个构建没有配置云端地址')).toBeInTheDocument();
+    } else if (!sync.signedIn) {
+      expect(await screen.findByText('需要先登录')).toBeInTheDocument();
+    }
+    expect((await getIdea(stored.id))?.content).toBe('车库入口的空位雷达');
+  });
+
+  it('每条念头的操作区都有生成图片入口', async () => {
+    await createIdea({ content: '列表里也要能直接生图' });
+    renderApp();
+
+    const title = await screen.findByText('列表里也要能直接生图');
+    const card = title.closest('li') as HTMLElement;
+    expect(within(card).getByRole('button', { name: '生成图片' })).toBeInTheDocument();
   });
 });
