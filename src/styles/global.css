@@ -2078,3 +2078,105 @@ html[data-nb-keyboard='open'] .nb-tabbar {
     grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   }
 }
+
+/* ------------------------------------------------------------- 我的作品 */
+
+/* 作品缩略图网格：首页「最近作品」与「我的作品」页共用同一套类，
+   两处只是列数不同，避免再写一份相近但不一致的卡片样式。 */
+.nb-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--nb-3);
+  margin: var(--nb-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nb-gallery__item {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--nb-line-strong);
+  border-radius: var(--nb-radius-sm);
+  background: var(--nb-surface);
+}
+
+.nb-gallery__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--nb-line);
+  background: var(--nb-surface-soft);
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.nb-gallery__thumb:hover {
+  background: var(--nb-accent-soft);
+}
+
+.nb-gallery__thumb:focus-visible {
+  outline: 2px solid var(--nb-focus);
+  outline-offset: -2px;
+}
+
+.nb-gallery__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 元数据在、图片丢了：明确说明，而不是留一块空白让人猜。 */
+.nb-gallery__missing {
+  padding: var(--nb-2);
+  color: var(--nb-ink-muted);
+  font-size: var(--nb-text-xs);
+  text-align: center;
+}
+
+.nb-gallery__meta {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--nb-2);
+  padding: var(--nb-3);
+}
+
+.nb-gallery__title {
+  margin: 0;
+  color: var(--nb-ink-strong);
+  font-size: var(--nb-text-base);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.nb-gallery__sub {
+  margin: 0;
+  color: var(--nb-ink-muted);
+  font-size: var(--nb-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.nb-gallery__note {
+  margin: 0;
+  color: var(--nb-warn);
+  font-size: var(--nb-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.nb-gallery__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nb-1);
+  margin-top: auto;
+}
+
+/* 首页只放最近几张，方块缩略图更省纵向空间。 */
+.nb-gallery--compact .nb-gallery__thumb {
+  aspect-ratio: 1 / 1;
+}
