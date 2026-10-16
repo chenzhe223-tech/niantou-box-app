@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { deleteDatabase, closeDatabase } from './idb';
+import { closeDatabase, deleteDatabase, openDatabase } from './idb';
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
@@ -32,6 +32,7 @@ import {
   softDeleteIdea,
   upgradeIdeaToProject,
 } from './storage';
+import { getWork, listWorks, listWorksForIdea, readWorkImage, saveWork } from './works';
 import type { BackupFile } from '../types/backup';
 
 const LONG_CONTENT = [
@@ -350,8 +351,348 @@ describe('导入结果提示', () => {
       projectsOverwritten: 0,
       projectsSkipped: 0,
       projectsDuplicated: 0,
+      worksImported: 0,
+      worksOverwritten: 0,
+      worksSkipped: 0,
+      worksDuplicated: 0,
+      imagesRestored: 0,
       warnings: [],
     };
     expect(describeReport(report)).toBe('没有需要导入的记录。');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* v2 备份：作品元数据与作品图片                                                */
+/* -------------------------------------------------------------------------- */
+
+const BACKUP_DATA_URL = `data:image/png;base64,${'B'.repeat(64)}`;
+const OTHER_DATA_URL = `data:image/png;base64,${'C'.repeat(64)}`;
+
+/** saveWork 的入参形状。 */
+function cardWork(ideaId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    ideaId,
+    source: 'card' as const,
+    render: 'local' as const,
+    style: 'card',
+    aspect: '3:4',
+    title: '车位雷达',
+    dataUrl: BACKUP_DATA_URL,
+    ...overrides,
+  };
+}
+
+/** 备份文件里的一条作品元数据（可以与 saveWork 的结果构造出同 ID 冲突）。 */
+function workObject(id: string, ideaId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    ideaId,
+    kind: 'poster' as const,
+    source: 'card' as const,
+    render: 'local' as const,
+    style: 'card',
+    aspect: '3:4',
+    title: '作品',
+    createdAt: 1,
+    ...overrides,
+  };
+}
+
+describe('备份 v2：导出包含作品与图片', () => {
+  it('导出的备份带上作品元数据与图片，版本升到 v2', async () => {
+    const idea = await createIdea({ content: '车库入口的空位雷达' });
+    const work = await saveWork(cardWork(idea.id));
+
+    const backup = await exportBackup();
+
+    expect(backup.version).toBe(2);
+    expect(backup.counts.works).toBe(1);
+    expect(backup.counts.workImages).toBe(1);
+    expect(backup.works.map((item) => item.id)).toEqual([work.id]);
+    expect(backup.works[0].ideaId).toBe(idea.id);
+    expect(backup.workImages.map((item) => item.workId)).toEqual([work.id]);
+    expect(backup.workImages[0].dataUrl).toBe(BACKUP_DATA_URL);
+  });
+
+  it('回收站里的念头，其作品与图片也一起备份', async () => {
+    const kept = await createIdea({ content: '留下来的念头' });
+    const removed = await createIdea({ content: '进了回收站的念头' });
+    const keptWork = await saveWork(cardWork(kept.id, { title: '留着' }));
+    const removedWork = await saveWork(cardWork(removed.id, { title: '跟着回收站' }));
+    await softDeleteIdea(removed.id);
+
+    const backup = await exportBackup();
+
+    expect(backup.counts.deletedIdeas).toBe(1);
+    expect(backup.counts.deletedWorks).toBe(1);
+    expect(backup.works.map((item) => item.id).sort()).toEqual(
+      [keptWork.id, removedWork.id].sort(),
+    );
+    expect(backup.workImages.map((item) => item.workId).sort()).toEqual(
+      [keptWork.id, removedWork.id].sort(),
+    );
+  });
+});
+
+describe('备份 v2：导出后重置再导入可完整恢复', () => {
+  it('念头、项目、作品、图片与关联关系都恢复到位', async () => {
+    const idea = await createIdea({ content: '到店自取的储物柜', title: '储物柜' });
+    const { project } = await upgradeIdeaToProject(idea.id);
+    const work = await saveWork(cardWork(idea.id, { title: '储物柜卡片' }));
+    const text = serializeBackup(await exportBackup());
+
+    await resetLocalDatabase();
+
+    const report = await importBackup(text);
+
+    expect(report.ideasImported).toBe(1);
+    expect(report.projectsImported).toBe(1);
+    expect(report.worksImported).toBe(1);
+    expect(report.imagesRestored).toBe(1);
+
+    const works = await listWorks();
+    expect(works).toHaveLength(1);
+    expect(works[0].id).toBe(work.id);
+    // 关联关系如实恢复：作品仍然挂在原来那条念头上。
+    expect(works[0].ideaId).toBe(idea.id);
+    expect(works[0].title).toBe('储物柜卡片');
+    expect(works[0].source).toBe('card');
+    expect(works[0].render).toBe('local');
+    // 图片按 workId 一一对应，不是「导入成功但图片丢了」。
+    expect(await readWorkImage(work.id)).toBe(BACKUP_DATA_URL);
+    expect((await getIdea(idea.id))?.title).toBe('储物柜');
+    expect((await getProject(project.id))?.ideaId).toBe(idea.id);
+
+    // 导入不会重建数据库，版本仍是当前的 v4。
+    expect((await openDatabase()).version).toBe(4);
+  });
+
+  it('作品在、图片不在时只恢复记录，并明确提示图片缺失', async () => {
+    const result = validateBackup({
+      format: BACKUP_FORMAT,
+      version: 2,
+      ideas: [{ id: 'idea_1', content: '一条内容' }],
+      works: [workObject('work_1', 'idea_1', { title: '没有图的卡片' })],
+      workImages: [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings.join()).toContain('没有图片数据');
+    expect(result.backup?.works).toHaveLength(1);
+  });
+});
+
+describe('备份 v2：v1 兼容', () => {
+  it('旧版 v1 备份可以继续导入，且不改动本机作品库', async () => {
+    const localIdea = await createIdea({ content: '本机已有的念头' });
+    const localWork = await saveWork(cardWork(localIdea.id, { title: '本机作品' }));
+
+    const v1 = {
+      format: BACKUP_FORMAT,
+      version: 1,
+      exportedAt: '2026-01-02T03:04:05.000Z',
+      ideas: [{ id: 'idea_v1', content: '来自旧版备份的念头' }],
+    };
+
+    const validation = validateBackup(v1);
+    expect(validation.ok).toBe(true);
+    expect(validation.warnings.join()).toContain('没有作品数据');
+
+    const report = await importBackup(v1);
+    expect(report.ideasImported).toBe(1);
+    expect(report.warnings.join()).toContain('没有作品数据');
+    expect((await getIdea('idea_v1'))?.content).toBe('来自旧版备份的念头');
+
+    // v1 文件没有作品字段：导入后本机作品一件不多、一件不少。
+    expect((await listWorks()).map((item) => item.id)).toEqual([localWork.id]);
+    expect(await readWorkImage(localWork.id)).toBe(BACKUP_DATA_URL);
+  });
+});
+
+describe('备份 v2：重复 ID 的三种策略不会错关联作品', () => {
+  /** 构造「同一个念头 ID + 同一个作品 ID」的冲突备份。 */
+  function conflictingBackup(localIdeaId: string, localWorkId: string) {
+    return buildBackup(
+      [
+        {
+          id: localIdeaId,
+          title: '',
+          content: '备份内容',
+          category: null,
+          categorySource: null,
+          status: 'inbox',
+          tags: [],
+          pinned: false,
+          notes: '',
+          problem: '',
+          targetUsers: '',
+          productForm: null,
+          projectUrl: '',
+          projectId: null,
+          createdAt: 1,
+          updatedAt: 1,
+          deletedAt: null,
+        },
+      ],
+      [],
+      [workObject(localWorkId, localIdeaId, { title: '备份作品', createdAt: 2 })],
+      [
+        {
+          workId: localWorkId,
+          mime: 'image/png',
+          dataUrl: OTHER_DATA_URL,
+          bytes: 48,
+          createdAt: 2,
+        },
+      ],
+    );
+  }
+
+  it('duplicate：作品改挂到新导入的念头上，图片跟着新作品 ID 走', async () => {
+    const localIdea = await createIdea({ content: '本机内容' });
+    const localWork = await saveWork(cardWork(localIdea.id, { title: '本机作品' }));
+
+    const report = await importBackup(conflictingBackup(localIdea.id, localWork.id), {
+      duplicateStrategy: 'duplicate',
+    });
+
+    expect(report.ideasDuplicated).toBe(1);
+    expect(report.worksDuplicated).toBe(1);
+
+    const ideas = await listIdeas();
+    expect(ideas).toHaveLength(2);
+    const newIdea = ideas.find((idea) => idea.id !== localIdea.id);
+    expect(newIdea).toBeDefined();
+
+    const works = await listWorks();
+    expect(works).toHaveLength(2);
+    const newWork = works.find((work) => work.id !== localWork.id);
+    expect(newWork).toBeDefined();
+    // 关键：新作品挂到新念头上，绝不回挂到本机那条念头。
+    expect(newWork?.ideaId).toBe(newIdea?.id);
+    expect(newWork?.ideaId).not.toBe(localIdea.id);
+    // 图片也跟着新作品 ID，而不是覆盖本机作品那张图。
+    expect(await readWorkImage(newWork!.id)).toBe(OTHER_DATA_URL);
+    expect(await readWorkImage(localWork.id)).toBe(BACKUP_DATA_URL);
+  });
+
+  it('skip：本机作品与图片原样保留', async () => {
+    const localIdea = await createIdea({ content: '本机内容' });
+    const localWork = await saveWork(cardWork(localIdea.id, { title: '本机作品' }));
+
+    const report = await importBackup(conflictingBackup(localIdea.id, localWork.id));
+
+    expect(report.strategy).toBe('skip');
+    expect(report.ideasSkipped).toBe(1);
+    expect(report.worksSkipped).toBe(1);
+
+    expect((await listWorks()).map((item) => item.id)).toEqual([localWork.id]);
+    expect(await readWorkImage(localWork.id)).toBe(BACKUP_DATA_URL);
+    expect((await getIdea(localIdea.id))?.content).toBe('本机内容');
+  });
+
+  it('overwrite：作品按原 ID 覆盖，图片同步换成备份里的那张', async () => {
+    const localIdea = await createIdea({ content: '本机内容' });
+    const localWork = await saveWork(cardWork(localIdea.id, { title: '本机作品' }));
+
+    const report = await importBackup(conflictingBackup(localIdea.id, localWork.id), {
+      duplicateStrategy: 'overwrite',
+    });
+
+    expect(report.worksOverwritten).toBe(1);
+    expect(report.imagesRestored).toBe(1);
+    expect((await getWork(localWork.id))?.title).toBe('备份作品');
+    expect(await readWorkImage(localWork.id)).toBe(OTHER_DATA_URL);
+  });
+
+  it('备份里孤立的作品不会被硬塞给本机念头', async () => {
+    const localIdea = await createIdea({ content: '本机内容' });
+
+    const raw = {
+      format: BACKUP_FORMAT,
+      version: 2,
+      ideas: [{ id: 'idea_incoming', content: '备份里的念头' }],
+      works: [workObject('work_orphan', 'idea_missing', { title: '孤儿作品' })],
+      workImages: [],
+    };
+
+    const validation = validateBackup(raw);
+    expect(validation.ok).toBe(true);
+    expect(validation.warnings.join()).toContain('不在备份文件中');
+    expect(validation.backup?.works).toHaveLength(0);
+
+    await importBackup(raw);
+    expect(await listWorks()).toHaveLength(0);
+    expect(await listWorksForIdea(localIdea.id)).toHaveLength(0);
+  });
+});
+
+describe('备份 v2：坏数据与失败回滚', () => {
+  it('作品图片不是合法的 data: URL 时明确报错，不会静默丢图', () => {
+    const result = validateBackup({
+      format: BACKUP_FORMAT,
+      version: 2,
+      ideas: [{ id: 'idea_1', content: '一条内容' }],
+      works: [workObject('work_1', 'idea_1')],
+      workImages: [
+        { workId: 'work_1', mime: 'image/png', dataUrl: 'https://example.com/x.png', createdAt: 1 },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join()).toContain('不是合法的图片');
+  });
+
+  it('作品元数据不完整（缺关联念头）时明确报错', () => {
+    const result = validateBackup({
+      format: BACKUP_FORMAT,
+      version: 2,
+      ideas: [{ id: 'idea_1', content: '一条内容' }],
+      works: [workObject('work_bad', '')],
+      workImages: [],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join()).toContain('数据不完整或格式不对');
+  });
+
+  it('图片超过单张上限时报错，并说明是哪一件作品', () => {
+    // 23M 个 base64 字符 ≈ 17 MB 二进制，超过 16 MB 的单张上限。
+    const huge = `data:image/png;base64,${'A'.repeat(23 * 1024 * 1024)}`;
+    const result = validateBackup({
+      format: BACKUP_FORMAT,
+      version: 2,
+      ideas: [{ id: 'idea_1', content: '一条内容' }],
+      works: [workObject('work_1', 'idea_1')],
+      workImages: [{ workId: 'work_1', mime: 'image/png', dataUrl: huge, createdAt: 1 }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join()).toContain('超过单张上限');
+  });
+
+  it('导入校验失败时抛错，本机念头与作品一点没变', async () => {
+    const localIdea = await createIdea({ content: '必须保住的内容' });
+    const localWork = await saveWork(cardWork(localIdea.id, { title: '必须保住的作品' }));
+
+    const broken = {
+      format: BACKUP_FORMAT,
+      version: 2,
+      ideas: [{ id: 'idea_incoming', content: '来自备份的念头' }],
+      works: [workObject('work_ok', 'idea_incoming')],
+      workImages: [
+        { workId: 'work_ok', mime: 'image/png', dataUrl: 'not-a-data-url', createdAt: 1 },
+      ],
+    };
+
+    await expect(importBackup(broken)).rejects.toBeInstanceOf(NianBoxError);
+
+    // 校验先于写入：一条念头、一件作品都没被写进来。
+    expect((await listIdeas()).map((item) => item.id)).toEqual([localIdea.id]);
+    expect((await listWorks()).map((item) => item.id)).toEqual([localWork.id]);
+    expect(await getIdea('idea_incoming')).toBeNull();
+    expect(await readWorkImage(localWork.id)).toBe(BACKUP_DATA_URL);
+    expect((await openDatabase()).version).toBe(4);
   });
 });
