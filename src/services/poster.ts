@@ -664,6 +664,15 @@ export function downloadPoster(dataUrl: string, filename: string): void {
 }
 
 /**
+ * 系统分享不可用时统一用这一句。
+ *
+ * 网页无法保证一定能唤起微信这类应用（微信内置浏览器、桌面浏览器都不支持），
+ * 所以这里不假装「已分享」，而是说清下一步能做什么。
+ */
+export const SHARE_UNSUPPORTED_MESSAGE =
+  '这台设备的浏览器不支持系统分享，可以先保存图片，再在相册或微信里分享。';
+
+/**
  * 用系统分享面板分享图片。
  * 需要先把 data: URL 转成 File——多数浏览器只接受 File 形式。
  */
