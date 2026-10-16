@@ -12,6 +12,8 @@ import {
   STORE_IDEAS,
   STORE_OUTBOX,
   STORE_PROJECTS,
+  STORE_WORK_IMAGES,
+  STORE_WORKS,
   IndexedDbError,
   clearStore,
   deleteRecord,
@@ -46,6 +48,13 @@ import {
 import { matchesIdeaQuery, sortIdeas } from './query';
 import { track } from './analytics';
 import { publishLocalMutation } from './syncBus';
+import { emitChange, getChangeVersion, subscribeToChanges } from './changeBus';
+
+/**
+ * 变更订阅：页面借此在数据变化后重新加载，避免各处自行轮询。
+ * 实现放在 changeBus 里，作品服务（works.ts）也用它广播同一个事件。
+ */
+export { subscribeToChanges, getChangeVersion };
 
 export type StorageErrorCode =
   | 'EMPTY_CONTENT'
@@ -85,36 +94,6 @@ export function createId(prefix = 'idea'): string {
   }
   const random = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now().toString(36)}_${random}`;
-}
-
-/* -------------------------------------------------------------------------- */
-/* 变更订阅：页面借此在数据变化后重新加载，避免各处自行轮询。                  */
-/* -------------------------------------------------------------------------- */
-
-type ChangeListener = () => void;
-const changeListeners = new Set<ChangeListener>();
-let changeVersion = 0;
-
-export function subscribeToChanges(listener: ChangeListener): () => void {
-  changeListeners.add(listener);
-  return () => {
-    changeListeners.delete(listener);
-  };
-}
-
-export function getChangeVersion(): number {
-  return changeVersion;
-}
-
-function emitChange(): void {
-  changeVersion += 1;
-  for (const listener of [...changeListeners]) {
-    try {
-      listener();
-    } catch {
-      // 单个订阅者出错不应影响其他订阅者。
-    }
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -162,10 +141,13 @@ export function normalizeIdea(raw: Partial<Idea> & { id: string }): Idea {
       raw.deletedAt === null || raw.deletedAt === undefined
         ? null
         : asTimestamp(raw.deletedAt, updatedAt),
-    /**
-     * 作品字段（本轮不写入任何数据）：坏条目直接丢弃，缺省时保持 undefined。
-     * 刻意不补空数组 —— 「从来没记录过作品」与「记录了 0 件作品」是两件事。
-     */
+/**
+ * 作品字段：坏条目直接丢弃，缺省时保持 undefined。
+ * 刻意不补空数组 —— 「从来没记录过作品」与「记录了 0 件作品」是两件事。
+ *
+ * 说明：本轮新增的作品库写在单独的 works / workImages 表里（见 services/works.ts），
+ * 图片不会塞进念头记录本身，也不随念头一起同步到云端；这个字段只为兼容更早的数据保留。
+ */
     works: Array.isArray(raw.works) ? raw.works.filter(isIdeaWork) : undefined,
   };
 }
@@ -386,19 +368,33 @@ export async function restoreIdea(id: string): Promise<Idea> {
   return updated;
 }
 
-/** 永久删除念头，同时删除其关联项目，避免留下悬空的项目。 */
+/**
+ * 永久删除念头，同时删除其关联项目与本机作品（元数据 + 图片），
+ * 避免留下悬空的项目或「找不到念头」的作品。
+ */
 export async function purgeIdea(id: string): Promise<void> {
   const projects = await readAll<Project>(STORE_PROJECTS);
   const linked = projects.filter((project) => project.ideaId === id).map((project) => project.id);
 
   await withTransaction(
-    { stores: [STORE_IDEAS, STORE_PROJECTS] },
+    { stores: [STORE_IDEAS, STORE_PROJECTS, STORE_WORKS, STORE_WORK_IMAGES] },
     'readwrite',
     async (tx) => {
       await promisifyRequest(tx.objectStore(STORE_IDEAS).delete(id));
       const projectStore = tx.objectStore(STORE_PROJECTS);
       for (const projectId of linked) {
         await promisifyRequest(projectStore.delete(projectId));
+      }
+      // 作品按 ideaId 建了索引，这里同一个事务里把元数据与图片一起删掉：
+      // 要么都删掉，要么都不动，不会出现「作品在、图片没了」的坏数据。
+      const workStore = tx.objectStore(STORE_WORKS);
+      const imageStore = tx.objectStore(STORE_WORK_IMAGES);
+      const workIds = (await promisifyRequest(
+        workStore.index('by_ideaId').getAllKeys(id),
+      )) as IDBValidKey[];
+      for (const workId of workIds) {
+        await promisifyRequest(workStore.delete(workId));
+        await promisifyRequest(imageStore.delete(workId));
       }
     },
   );
@@ -745,6 +741,9 @@ export async function clearAllData(): Promise<void> {
   // 待同步队列里存的是完整记录（含用户原文），清空数据时必须一起清掉，
   // 否则「清空全部数据」之后队列还会把内容推上云端。
   await clearStore(STORE_OUTBOX);
+  // 本机作品存的是用户自己的图片，属于「我的数据」，同样要清干净。
+  await clearStore(STORE_WORKS);
+  await clearStore(STORE_WORK_IMAGES);
   emitChange();
 }
 
