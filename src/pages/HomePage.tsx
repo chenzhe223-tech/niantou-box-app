@@ -11,6 +11,7 @@
  */
 
 import { useMemo, useState, type FormEvent } from 'react';
+import { formatRelative } from '../app/format';
 import { useAppData } from '../app/AppDataProvider';
 import { paths } from '../app/routes';
 import { AiToolDialog } from '../components/AiToolDialog';
@@ -22,10 +23,13 @@ import { Icon } from '../components/Icon';
 import { useToast } from '../components/Toast';
 import { useDraft } from '../hooks/useDraft';
 import { useNow } from '../hooks/useNow';
+import { useWorks } from '../hooks/useWorks';
 import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
 import { classifyIdeaInBackground, trackClassifyOutcome } from '../services/aiClassify';
 import { copyText, shareText } from '../services/aiTools';
+import { SHARE_UNSUPPORTED_MESSAGE, sharePoster } from '../services/poster';
 import { createIdea, setIdeaPinned, softDeleteIdea, toNianBoxError } from '../services/storage';
+import { workRenderLabel, type WorkRecord } from '../services/works';
 import {
   IDEA_CATEGORIES,
   displayTitle,
@@ -50,6 +54,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const draft = useDraft('home');
   const now = useNow();
   const sync = useCloudSync();
+  const works = useWorks();
 
   const [category, setCategory] = useState<CategoryChoice>('none');
   const [error, setError] = useState<string | null>(null);
@@ -83,13 +88,21 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
     return map;
   }, [activeProjects]);
 
-  /** 生图走服务端，先决条件是「配了云端地址」且「已登录」。两者都要如实说明。 */
+  /**
+   * AI 增强生图的先决条件是「配了云端地址」且「已登录」。
+   *
+   * 注意：这只是**AI 生图**的前提，不是「能不能做出一张图片」的前提。
+   * 没登录时用户照样可以在这台设备上制作本机念头卡片，所以入口按钮不会被禁用。
+   */
   const posterReady = sync.configured && sync.signedIn;
   const posterBlockedReason = !sync.configured
-    ? '这个构建没有配置云端地址，生成图片暂时不可用。'
+    ? '这个构建没有配置云端地址，AI 增强生图暂时不可用；不登录也可以直接制作本机念头卡片。'
     : !sync.signedIn
-      ? '生成图片需要先登录云端账号（用来确认这些念头属于你）。'
+      ? 'AI 增强生图需要先登录云端账号（用来确认这些念头属于你）；不登录也可以直接制作本机念头卡片。'
       : '';
+
+  /** 首页只展示最近三件作品，其余的走「查看全部」。 */
+  const recentWorks = useMemo(() => works.works.slice(0, 3), [works.works]);
 
   /**
    * 把输入框里的内容真正写进数据库。
@@ -197,6 +210,21 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
     }
   };
 
+  /** 直接分享作品：系统分享用不了时给一条能照着做的替代路径，而不是静默失败。 */
+  const handleShareWork = async (work: WorkRecord) => {
+    const dataUrl = works.images.get(work.id);
+    if (!dataUrl) {
+      toast.push({ message: '这件作品的图片数据缺失，暂时无法分享。', tone: 'error' });
+      return;
+    }
+    const result = await sharePoster(dataUrl, `nianbox-work-${work.aspect.replace(':', 'x')}.png`, work.title || '念头盒作品');
+    if (result === 'unsupported') {
+      toast.push({ message: SHARE_UNSUPPORTED_MESSAGE, tone: 'info' });
+    } else if (result === 'failed') {
+      toast.push({ message: '分享没有完成，图片还在，可以再试一次。', tone: 'info' });
+    }
+  };
+
   const handleTogglePin = async (idea: Idea) => {
     setBusyId(idea.id);
     try {
@@ -292,7 +320,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
           <p className="nb-quickstart__note">
             {posterReady
               ? '这两个入口都会先把这句话原样存好，再继续下一步；生成失败也不会影响已经存下的内容。'
-              : `生成图片：${posterBlockedReason}`}
+              : `${posterBlockedReason}先把这句话存好，再继续下一步：生成失败也不会影响已经存下的内容。`}
           </p>
         </div>
 
@@ -340,7 +368,6 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
             <Button
               variant="primary"
               icon="image"
-              disabled={!posterReady}
               onClick={() => navigate(paths.poster(savedIdea.id))}
             >
               把它变成图片
@@ -403,6 +430,87 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
           )}
         </section>
       ) : null}
+
+      {/* ------------------------------------------------------------ 最近作品 */}
+      <section className="nb-section" aria-labelledby="nb-home-works">
+        <div className="nb-section__head">
+          <h2 className="nb-section__title" id="nb-home-works">
+            最近作品
+          </h2>
+          {works.works.length > 0 ? (
+            <button
+              type="button"
+              className="nb-link nb-link--button"
+              onClick={() => navigate(paths.works)}
+            >
+              查看全部（{works.works.length}）
+            </button>
+          ) : null}
+        </div>
+
+        {recentWorks.length === 0 ? (
+          <EmptyState
+            icon="image"
+            title="还没有保存过作品。"
+            description="随手记下一个念头，就能在这台设备上把它排成一张卡片，不用登录，也不会消耗任何模型额度。"
+            action={
+              <Button variant="secondary" icon="image" onClick={() => navigate(paths.posterTool)}>
+                去做第一张卡片
+              </Button>
+            }
+          />
+        ) : (
+          <>
+            <ul className="nb-gallery nb-gallery--compact">
+              {recentWorks.map((work) => (
+                <li key={work.id} className="nb-gallery__item">
+                  <button
+                    type="button"
+                    className="nb-gallery__thumb"
+                    aria-label="打开我的作品"
+                    onClick={() => navigate(paths.works)}
+                  >
+                    {works.images.get(work.id) ? (
+                      <img className="nb-gallery__image" src={works.images.get(work.id)} alt="" />
+                    ) : (
+                      <span className="nb-gallery__missing">图片数据缺失</span>
+                    )}
+                  </button>
+                  <div className="nb-gallery__meta">
+                    <p className="nb-gallery__title">{work.title || '（无标题）'}</p>
+                    <p className="nb-gallery__sub">
+                      {workRenderLabel(work)} · {formatRelative(work.createdAt, now)}
+                    </p>
+                    <div className="nb-gallery__actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => navigate(paths.poster(work.ideaId))}
+                      >
+                        继续创作
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => void handleShareWork(work)}>
+                        分享
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <p className="nb-kv">
+              作品只保存在这台设备上，不会自动上传，也不会自动公开。想找以前的图，可以进
+              <button
+                type="button"
+                className="nb-link nb-link--button"
+                onClick={() => navigate(paths.works)}
+              >
+                我的作品
+              </button>
+              。
+            </p>
+          </>
+        )}
+      </section>
 
       <section className="nb-section" aria-labelledby="nb-home-recent">
         <div className="nb-section__head">
