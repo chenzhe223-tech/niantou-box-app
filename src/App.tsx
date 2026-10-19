@@ -12,7 +12,7 @@ import { isDevDashboardEnabled } from './app/telemetryConfig';
 import { BrandMark } from './components/BrandMark';
 import { Icon, type IconName } from './components/Icon';
 import { ErrorState, LoadingState } from './components/States';
-import { ToastProvider } from './components/Toast';
+import { ToastProvider, useToast } from './components/Toast';
 import { useHashRoute } from './hooks/useHashRoute';
 import { useCategoryBackfill } from './hooks/useCategoryBackfill';
 import { useCloudSync } from './hooks/useCloudSync';
