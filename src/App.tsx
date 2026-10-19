@@ -5,6 +5,7 @@
  * 刷新任意页面都不会 404。
  */
 
+import { useEffect, useRef } from 'react';
 import { AppDataProvider, useAppData } from './app/AppDataProvider';
 import { paths, type Route } from './app/routes';
 import { isDevDashboardEnabled } from './app/telemetryConfig';
@@ -16,6 +17,7 @@ import { useHashRoute } from './hooks/useHashRoute';
 import { useCategoryBackfill } from './hooks/useCategoryBackfill';
 import { useCloudSync } from './hooks/useCloudSync';
 import { useKeyboardInset } from './hooks/useKeyboardInset';
+import { importPendingRadarSkills } from './services/radarSkillCapture';
 import { DeveloperPage } from './pages/DeveloperPage';
 import { CloudPage } from './pages/CloudPage';
 import { FeedbackPage } from './pages/FeedbackPage';
@@ -112,6 +114,43 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
   const { status, error, reload, ideas } = useAppData();
   const cloud = useCloudSync();
   const current = activeTab(route);
+  const toast = useToast();
+  const radarImportStarted = useRef(false);
+
+  // Import explicitly saved Skills after local IndexedDB is ready.
+  useEffect(() => {
+    if (status !== 'ready' || radarImportStarted.current) return;
+    radarImportStarted.current = true;
+    let active = true;
+    void importPendingRadarSkills()
+      .then((result) => {
+        if (!active) return;
+        if (result.imported > 0) {
+          toast.push({
+            message: '已从 AI 简报收录 ' + result.imported + ' 个 Skill，已放入念头盒收件箱。',
+            tone: 'success',
+          });
+        }
+        if (result.failed > 0) {
+          toast.push({
+            message: result.failed + ' 个 Skill 暂未收录，仍留在待导入队列；刷新后可以重试。',
+            tone: 'error',
+            duration: 0,
+          });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        toast.push({
+          message: '简报 Skill 暂未导入，待导入内容仍会保留；请稍后刷新重试。',
+          tone: 'error',
+          duration: 0,
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [status, toast]);
 
   // 手机软键盘弹起时多留一段下边距，输入框与保存按钮不会被键盘挡住。
   useKeyboardInset();
