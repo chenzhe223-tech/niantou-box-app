@@ -2400,6 +2400,8 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
     let status = 0;
     let model = models[0];
     const tried = [];
+    let cloudflareInline = '';
+    let cloudflareMime = 'image/png';
     for (let m = 0; m < models.length; m += 1) {
       model = models[m];
       tried.push(model);
@@ -2425,7 +2427,18 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
         });
         status = res.status;
         ok = res.ok;
-        text = await res.text();
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (ok && cfg.provider === 'cloudflare' && contentType.startsWith('image/')) {
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
+            return { ok: false, error: '图片文件异常，已停止返回。', detail: `bytes-${bytes.length}` };
+          }
+          cloudflareInline = bytesToBase64(bytes);
+          cloudflareMime = contentType.split(';')[0];
+          text = '';
+        } else {
+          text = await res.text();
+        }
         if (ok) break;
         // 只对「参数不被支持」退让；鉴权、余额、限流这类错误重试没有意义。
         const canRetry = i < shapes.length - 1 && status === 400;
@@ -2453,7 +2466,7 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
     const parsed = parseJsonLoose(text);
     const first = parsed && Array.isArray(parsed.data) ? parsed.data[0] : null;
     const inline = cfg.provider === 'cloudflare'
-      ? (parsed?.result?.image || parsed?.image || '')
+      ? (cloudflareInline || parsed?.result?.image || parsed?.image || '')
       : first ? first.b64_json || first.b64 || '' : '';
     const remoteUrl = cfg.provider === 'cloudflare'
       ? ''
@@ -2464,7 +2477,7 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
 
     let base64 = typeof inline === 'string' ? inline : '';
     let mime = cfg.provider === 'cloudflare'
-      ? 'image/jpeg'
+      ? cloudflareMime
       : typeof first?.mime_type === 'string' && first.mime_type ? first.mime_type : 'image/png';
     if (!base64 && remoteUrl) {
       const download = await fetch(remoteUrl);
