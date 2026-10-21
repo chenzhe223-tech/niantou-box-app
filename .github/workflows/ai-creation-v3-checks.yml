@@ -1,0 +1,45 @@
+name: NianBox AI Creation v3 checks
+
+on:
+  push:
+    branches:
+      - feature/nianbox-ai-creation-v3
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nianbox-ai-v3-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, tests, and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Run tests
+        run: pnpm test
+      - name: Build production bundle
+        run: pnpm build
+        env:
+          BASE_PATH: /niantou-box-app/
+          VITE_OFFICIAL_SITE_URL: https://chenzhe223-tech.github.io/niantou-box/
+          VITE_CLOUD_ENDPOINT: https://nianbox-cloud.chenzhe223.workers.dev
+          VITE_DEV_DASHBOARD: '0'
