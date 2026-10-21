@@ -142,7 +142,7 @@ export function IdeaAnalysisPanel({ idea }: { idea: Idea }) {
                 <div><strong>实施任务</strong><ol>{selectedPlan.tasks.map((task, i) => <li key={i}>{task}</li>)}</ol></div>
                 <div><strong>验收标准</strong><ul>{selectedPlan.acceptance.map((item, i) => <li key={i}>{item}</li>)}</ul></div>
                 <p><strong>取舍：</strong>{selectedPlan.tradeoffs}</p>
-                <Button block variant="secondary" icon="copy" onClick={() => void handleCopyTaskPack()}>
+                <Button block variant="secondary" onClick={() => void handleCopyTaskPack()}>
                   复制这套方案的开发任务包
                 </Button>
               </div>
