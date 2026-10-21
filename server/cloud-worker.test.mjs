@@ -784,3 +784,108 @@ describe('边界', () => {
     expect(body.code).toBe('RESET_TOKEN_INVALID');
   });
 });
+
+
+/* -------------------------------------------------------------------------- */
+/* AI 念头分析：鉴权、模型调用与隐私边界                                        */
+/* -------------------------------------------------------------------------- */
+
+describe('POST /ai/analyze', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('未登录时拒绝分析，不调用上游模型', async () => {
+    const db = createDb();
+    const env = makeEnv(db, {
+      AI_PROVIDER: 'openai',
+      AI_BASE_URL: 'https://api.example.com/v1',
+      AI_API_KEY: 'test-key',
+      AI_MODEL: 'test-model',
+    });
+    const upstream = vi.fn();
+    vi.stubGlobal('fetch', upstream);
+
+    const result = await callJson('/ai/analyze', {
+      method: 'POST',
+      body: { content: '帮普通人把点子变成 App' },
+      env,
+    });
+    expect(result.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('需要有效会话；AI 未配置时不伪造分析结果', async () => {
+    const db = createDb();
+    await seedAlice(db);
+    const env = makeEnv(db);
+    const login = await callJson('/auth/login', {
+      method: 'POST',
+      body: { email: ALICE_EMAIL, password: ALICE_PASSWORD },
+      env,
+    });
+    expect(login.status).toBe(200);
+    expect(login.body.token).toBeTruthy();
+
+    const result = await callJson('/ai/analyze', {
+      method: 'POST',
+      token: login.body.token,
+      body: { content: '帮普通人把点子变成 App' },
+      env,
+    });
+    expect(result.status).toBe(503);
+    expect(result.body.code).toBe('AI_NOT_CONFIGURED');
+    expect(result.body.analysis).toBeUndefined();
+  });
+
+  it('不把原始念头写进 service_log，且返回三种完整方案', async () => {
+    const db = createDb();
+    await seedAlice(db);
+    const env = makeEnv(db, {
+      AI_PROVIDER: 'openai',
+      AI_BASE_URL: 'https://api.example.com/v1',
+      AI_API_KEY: 'test-key',
+      AI_MODEL: 'test-model',
+    });
+    const login = await callJson('/auth/login', {
+      method: 'POST',
+      body: { email: ALICE_EMAIL, password: ALICE_PASSWORD },
+      env,
+    });
+    expect(login.status).toBe(200);
+
+    const payload = {
+      summary: '为非程序员提供从想法到原型的清晰路径。',
+      problem: '不知道如何开始实现自己的念头。',
+      targetUsers: ['没有编程经验的人'],
+      assumptions: ['用户愿意按步骤完成小任务'],
+      validation: ['先访谈目标用户'],
+      risks: ['真实需求尚未验证'],
+      plans: [
+        { id: 'free', name: '免费验证版', goal: '验证需求', architecture: '人工访谈与可点击原型', costEstimate: '估算：0-100 元，不含人工', timeline: '估算：3-5 天', tasks: ['制作原型'], acceptance: ['完成 5 次用户访谈'], tradeoffs: '人工投入较多' },
+        { id: 'low_cost', name: '最低成本实用版', goal: '跑通核心闭环', architecture: 'GitHub Pages + Cloudflare Worker', costEstimate: '估算：按免费额度起步', timeline: '估算：2-4 周', tasks: ['实现核心流程'], acceptance: ['完成一次端到端测试'], tradeoffs: '需要管理 API 用量' },
+        { id: 'commercial', name: '商业化版本', goal: '支持持续运营', architecture: '账号权限、成本监控与配额', costEstimate: '需按实际用量核算', timeline: '估算：6-12 周', tasks: ['建立监控与告警'], acceptance: ['权限隔离测试通过'], tradeoffs: '运维成本更高' },
+      ],
+      nextStep: '先找 3 位目标用户做访谈。',
+      trendQueries: ['AI 创作工具'],
+      skillQueries: ['AI app builder'],
+    };
+    const rawIdea = '私人念头内容-不应进入日志';
+    const upstream = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(payload) } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', upstream);
+
+    const result = await callJson('/ai/analyze', {
+      method: 'POST',
+      token: login.body.token,
+      body: { title: '想法助手', content: rawIdea },
+      env,
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.analysis.plans).toHaveLength(3);
+    expect(result.body.analysis.plans.map((plan) => plan.id)).toEqual(['free', 'low_cost', 'commercial']);
+    expect(JSON.stringify(db.tables.service_log)).not.toContain(rawIdea);
+    expect(JSON.stringify(db.tables.service_log)).not.toContain('想法助手');
+  });
+});
