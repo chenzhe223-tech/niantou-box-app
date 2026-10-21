@@ -1915,7 +1915,7 @@ function cleanAnalysisList(value, maxItems = 5, maxChars = 360) {
     .slice(0, maxItems);
 }
 
-function validateIdeaAnalysis(value) {
+export function validateIdeaAnalysis(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const plans = Array.isArray(value.plans) ? value.plans : [];
   const requiredIds = ['free', 'low_cost', 'commercial'];
