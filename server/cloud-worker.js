@@ -1742,9 +1742,20 @@ export async function callChat(env, messages, options = {}) {
   }
 
   if (!last.ok) {
+    const publicMessage = last.empty === true
+      ? 'AI 服务没有返回内容。'
+      : last.status === 429
+        ? 'AI 服务商当前限流或可用额度不足，已尝试配置中的备用模型但仍未成功。请检查 AI 服务商额度、速率限制及备用模型配置后再试。'
+        : last.status === 402
+          ? 'AI 服务商返回额度或付费状态异常，请检查服务商账户。'
+          : last.status === 401 || last.status === 403
+            ? 'AI 服务商鉴权失败，请检查服务端 API Key 与权限配置。'
+            : last.status === 404
+              ? 'AI 服务商未找到配置的模型或接口，请检查模型名称与 API 地址。'
+              : `AI 服务返回错误（HTTP ${last.status}）。`;
     const error = new HttpError(
       502,
-      last.empty === true ? 'AI 服务没有返回内容。' : `AI 服务返回错误（HTTP ${last.status}）。`,
+      publicMessage,
       'AI_UPSTREAM',
     );
     if (last.empty === true) {
