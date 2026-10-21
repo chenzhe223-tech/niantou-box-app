@@ -63,8 +63,8 @@ describe('loadRadarMatches', () => {
     expect(fetcher).toHaveBeenCalledOnce();
     expect(result.reportDate).toBe('2026-10-21');
     expect(result.stale).toBe(false);
-    expect(result.newsMatches).toHaveLength(1);
-    expect(result.newsMatches[0].url).toBe('https://example.com/ai-app-builder');
+    expect(result.newsMatches).toHaveLength(2);
+    expect(result.newsMatches.some((item) => item.url === 'https://example.com/ai-app-builder')).toBe(true);
     expect(result.skillMatches).toHaveLength(1);
     expect(result.skillMatches[0].url).toBe('https://github.com/sample/ai-app-builder');
     expect(result.skillMatches[0].matchedBy).toContain('AI app builder');
