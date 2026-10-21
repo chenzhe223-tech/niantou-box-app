@@ -131,7 +131,7 @@ const SECRET_KEYS = [
   // 没配时这两个接口返回 503 ADMIN_TOKEN_NOT_CONFIGURED，绝不静默放行。
   'ADMIN_TOKEN',
 ];
-const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'PUBLIC_APP_URL'];
+const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'IMAGE_PROVIDER', 'PUBLIC_APP_URL'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
 const DEBUG_DETAIL = (process.env.NIANBOX_DEBUG_DETAIL || '').trim();
 
