@@ -40,6 +40,7 @@ interface RadarPayload {
   generated_at?: unknown;
   status?: unknown;
   news?: unknown;
+  china_ai_news?: unknown;
   top5?: unknown;
   skills?: unknown;
 }
@@ -107,14 +108,14 @@ function validateNews(value: unknown, reportDate: string): RadarNewsItem[] {
   return value.slice(0, 100).flatMap((raw) => {
     if (!raw || typeof raw !== 'object') return [];
     const item = raw as Record<string, unknown>;
-    const url = safeHttpsUrl(item.url);
-    const title = clean(item.title, 240);
+    const url = safeHttpsUrl(item.url ?? item.source_url);
+    const title = clean(item.title, 240) || clean(item.title_en, 240) || clean(item.original_title, 240) || clean(item.title_zh, 240);
     const source = clean(item.source, 100);
     if (!url || !title || !source) return [];
     return [{
       title,
       titleZh: clean(item.title_zh, 240) || undefined,
-      summary: clean(item.summary_zh, 1200) || clean(item.summary, 1200),
+      summary: clean(item.summary_zh, 1200) || clean(item.summary, 1200) || clean(item.what_zh, 1200) || clean(item.what_en, 1200),
       source,
       url,
       published: clean(item.published, 80) || undefined,
@@ -179,7 +180,14 @@ export async function loadRadarMatches(
   const newsQueries = trendQueries.filter(Boolean).slice(0, 4);
   const skillsQueryList = skillQueries.filter(Boolean).slice(0, 4);
 
-  const newsMatches = validateNews(payload.news, reportDate)
+  const newsRecords = [payload.news, payload.china_ai_news, payload.top5].flatMap((items) =>
+    Array.isArray(items) ? items : [],
+  );
+  const uniqueNews = [...new Map(
+    validateNews(newsRecords, reportDate).map((item) => [item.url, item]),
+  ).values()];
+
+  const newsMatches = uniqueNews
     .map((item) => {
       const scored = scoreRecord(newsQueries, [item.title, item.titleZh, item.summary, item.source].filter(Boolean).join(' '));
       return { ...item, ...scored };
