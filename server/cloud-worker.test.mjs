@@ -167,6 +167,30 @@ function createDb() {
     }
 
     /* ---- sessions ---- */
+    if (sql === 'SELECT s.user_id AS userId, s.expires_at AS expiresAt, s.token_hash AS tokenHash, u.email AS email, u.display_name AS displayName, u.created_at AS createdAt FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?') {
+      const session = tables.sessions.find((row) => row.token_hash === p[0]);
+      const user = session ? tables.users.find((row) => row.id === session.user_id) : null;
+      return {
+        rows: session && user ? [{
+          userId: session.user_id,
+          expiresAt: session.expires_at,
+          tokenHash: session.token_hash,
+          email: user.email,
+          displayName: user.display_name,
+          createdAt: user.created_at,
+        }] : [],
+        changes: 0,
+      };
+    }
+    if (sql === 'UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?') {
+      let changes = 0;
+      for (const row of tables.sessions) {
+        if (row.token_hash !== p[1]) continue;
+        row.last_seen_at = p[0];
+        changes += 1;
+      }
+      return { rows: [], changes };
+    }
     if (sql.startsWith('INSERT INTO sessions')) {
       tables.sessions.push({
         token_hash: p[0],
