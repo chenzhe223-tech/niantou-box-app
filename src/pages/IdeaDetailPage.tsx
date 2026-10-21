@@ -19,6 +19,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { SelectField, TagInputField, TextArea, TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
+import { IdeaAnalysisPanel } from '../components/IdeaAnalysisPanel';
 import { ShareCardPanel } from '../components/ShareCardPanel';
 import { useToast } from '../components/Toast';
 import { isIdeaPending, useCloudSync } from '../hooks/useCloudSync';
@@ -479,6 +480,8 @@ export function IdeaDetailPage({
           </p>
         </div>
       </section>
+
+      <IdeaAnalysisPanel idea={idea} />
 
       <ShareCardPanel idea={idea} />
 
