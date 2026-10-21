@@ -1476,7 +1476,7 @@ export function aiConfig(env) {
 /** 图像模型配置。同一个智谱 key 直接覆盖 CogView，不必再配第二把钥匙。 */
 export function imageConfig(env) {
   const source = env || {};
-  const explicitBase = (source.IMAGE_BASE_URL || source.AI_BASE_URL || '').trim().replace(/\\/+$/, '');
+  const explicitBase = (source.IMAGE_BASE_URL || source.AI_BASE_URL || '').trim().replace(/\/+$/, '');
   const apiKey = (source.IMAGE_API_KEY || source.AI_API_KEY || '').trim();
   const provider = resolveProvider(
     source.IMAGE_PROVIDER || source.AI_PROVIDER,
