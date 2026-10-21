@@ -218,6 +218,15 @@ async function main() {
   });
   console.log('5. 密钥已写入：IP_SALT');
 
+  // Cloudflare Workers AI REST API 的根地址由已确定的账号 ID 自动拼出，
+  // 用户只需配置 IMAGE_PROVIDER=cloudflare 与 IMAGE_API_KEY，不必再复制账号 ID 到另一个 secret。
+  if (
+    (process.env.IMAGE_PROVIDER || '').trim().toLowerCase() === 'cloudflare' &&
+    !(process.env.IMAGE_BASE_URL || '').trim()
+  ) {
+    process.env.IMAGE_BASE_URL = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`;
+  }
+
   const configured = [];
   for (const key of SECRET_KEYS) {
     const value = (process.env[key] || '').trim();
