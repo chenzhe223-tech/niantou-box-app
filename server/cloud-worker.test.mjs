@@ -244,6 +244,16 @@ function createDb() {
     }
 
     /* ---- service_log ---- */
+    if (sql === "SELECT COUNT(*) AS count FROM service_log WHERE user_id = ? AND day = ? AND kind = 'idea-analysis'") {
+      return {
+        rows: [{
+          count: tables.service_log.filter((row) =>
+            row.user_id === p[0] && row.day === p[1] && row.kind === 'idea-analysis',
+          ).length,
+        }],
+        changes: 0,
+      };
+    }
     if (sql.startsWith('INSERT INTO service_log')) {
       tables.service_log.push({
         id: p[0],
@@ -860,6 +870,47 @@ describe('POST /ai/analyze', () => {
     expect(result.status).toBe(503);
     expect(result.body.code).toBe('AI_NOT_CONFIGURED');
     expect(result.body.analysis).toBeUndefined();
+  });
+
+  it('超过每日分析上限时返回 429，且不再调用模型', async () => {
+    const db = createDb();
+    await seedAlice(db);
+    const env = makeEnv(db, {
+      AI_PROVIDER: 'openai',
+      AI_BASE_URL: 'https://api.example.com/v1',
+      AI_API_KEY: 'test-key',
+      AI_MODEL: 'test-model',
+    });
+    const login = await callJson('/auth/login', {
+      method: 'POST',
+      body: { email: ALICE_EMAIL, password: ALICE_PASSWORD },
+      env,
+    });
+    expect(login.status).toBe(200);
+    const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    for (let index = 0; index < 10; index += 1) {
+      db.tables.service_log.push({
+        id: 'analysis-' + index,
+        user_id: ALICE_ID,
+        day: today,
+        at: Date.now(),
+        kind: 'idea-analysis',
+        ok: 1,
+        detail: 'ok',
+      });
+    }
+    const upstream = vi.fn();
+    vi.stubGlobal('fetch', upstream);
+
+    const result = await callJson('/ai/analyze', {
+      method: 'POST',
+      token: login.body.token,
+      body: { content: '帮普通人把点子变成 App' },
+      env,
+    });
+    expect(result.status).toBe(429);
+    expect(result.body.code).toBe('AI_ANALYSIS_QUOTA');
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it('不把原始念头写进 service_log，且返回三种完整方案', async () => {
