@@ -49,6 +49,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_OPS_PER_PUSH = 200;
 const MAX_TEXT_CHARS = 4000;
 const MAX_TITLE_CHARS = 200;
+/** Expensive full idea analysis is capped per account/day to reduce accidental cost spikes. */
+const IDEA_ANALYSIS_DAILY_LIMIT = 10;
 
 /**
  * Cloudflare Workers 的 WebCrypto 对 PBKDF2 迭代次数有上限（超过 100000 直接抛错），
@@ -1970,6 +1972,20 @@ async function handleAnalyzeIdea(request, env) {
       code: 'AI_NOT_CONFIGURED',
       message: '云端 AI 模型尚未配置。原始念头已保留；请稍后再试，或复制提示词到你常用的 AI 工具。',
     }, 503);
+  }
+
+  const analysisDay = dayKey(nowMs(), num(env.TZ_OFFSET_HOURS, 8));
+  const usedRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM service_log WHERE user_id = ? AND day = ? AND kind = 'idea-analysis'",
+  ).bind(user.id, analysisDay).first();
+  const usedToday = Math.max(0, num(usedRow && usedRow.count, 0));
+  if (usedToday >= IDEA_ANALYSIS_DAILY_LIMIT) {
+    return json({
+      error: `今天的 AI 念头分析次数已达到上限（${IDEA_ANALYSIS_DAILY_LIMIT} 次），明天再来。`,
+      code: 'AI_ANALYSIS_QUOTA',
+      limit: IDEA_ANALYSIS_DAILY_LIMIT,
+      used: usedToday,
+    }, 429);
   }
 
   const userData = [
