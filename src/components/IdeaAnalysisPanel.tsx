@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Idea } from '../types/idea';
 import { Button } from './Button';
 import { copyText } from '../services/aiTools';
@@ -10,6 +10,7 @@ import {
   type IdeaAnalysis,
   type IdeaAnalysisPlan,
 } from '../services/ideaAnalysis';
+import { loadRadarMatches, type RadarMatchResult } from '../services/radarMatches';
 
 const PLAN_ORDER: IdeaAnalysisPlan['id'][] = ['free', 'low_cost', 'commercial'];
 
@@ -19,9 +20,36 @@ export function IdeaAnalysisPanel({ idea }: { idea: Idea }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [radar, setRadar] = useState<RadarMatchResult | null>(null);
+  const [radarLoading, setRadarLoading] = useState(false);
+  const [radarError, setRadarError] = useState('');
 
   const ready = canAnalyzeIdea();
   const selectedPlan = analysis?.plans.find((plan) => plan.id === selectedPlanId) ?? null;
+
+  useEffect(() => {
+    if (!analysis) {
+      setRadar(null);
+      setRadarError('');
+      return;
+    }
+    let active = true;
+    setRadarLoading(true);
+    setRadarError('');
+    void loadRadarMatches(analysis.trendQueries, analysis.skillQueries)
+      .then((result) => {
+        if (active) setRadar(result);
+      })
+      .catch((caught: unknown) => {
+        if (active) setRadarError(caught instanceof Error ? caught.message : 'AI 简报匹配暂时不可用。');
+      })
+      .finally(() => {
+        if (active) setRadarLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [analysis]);
 
   const handleAnalyze = async () => {
     if (loading) return;
@@ -153,11 +181,55 @@ export function IdeaAnalysisPanel({ idea }: { idea: Idea }) {
             <div className="nb-card nb-card--pad nb-stack">
               <div>
                 <span className="nb-analysis__eyebrow">03 / 下一步研究线索</span>
-                <h3 className="nb-analysis__heading">趋势与 Skills 待核验关键词</h3>
+                <h3 className="nb-analysis__heading">趋势与 Skills 匹配</h3>
               </div>
-              <p className="nb-analysis__hint">这些只是检索关键词，不是已经验证的新闻或安全可用的 Skill。</p>
-              {analysis.trendQueries.length ? <p><strong>AI 趋势：</strong>{analysis.trendQueries.join(' · ')}</p> : null}
-              {analysis.skillQueries.length ? <p><strong>Skills：</strong>{analysis.skillQueries.join(' · ')}</p> : null}
+              <p className="nb-analysis__hint">以下匹配来自 DAVYLAB AI 前沿简报的公开数据。相关性是关键词初筛，不代表新闻结论已独立验证，也不代表 Skill 已完成安全审计。</p>
+              {radarLoading ? <p className="nb-analysis__hint" role="status">正在读取最新简报并匹配……</p> : null}
+              {radarError ? <p className="nb-notice" role="status">{radarError} 你仍可以参考上方分析和开发任务包。</p> : null}
+              {radar ? (
+                <>
+                  <p className="nb-analysis__hint">
+                    简报日期：{radar.reportDate} · 数据生成：{new Date(radar.generatedAt).toLocaleString()}
+                  </p>
+                  {radar.stale ? <p className="nb-notice">简报数据可能已超过 72 小时或时间异常，请先打开原始来源核对。</p> : null}
+                  {radar.status !== 'ok' ? <p className="nb-notice">{radar.message || '简报状态异常，请谨慎参考。'}</p> : null}
+                  <div className="nb-analysis__match-group">
+                    <h4>相关 AI 新闻</h4>
+                    {radar.newsMatches.length ? (
+                      <ul className="nb-analysis__match-list">
+                        {radar.newsMatches.map((item) => (
+                          <li key={item.url}>
+                            <a href={item.url} target="_blank" rel="noopener noreferrer">{item.titleZh || item.title}</a>
+                            <span className="nb-analysis__match-meta">{item.source}{item.published ? ` · ${item.published}` : ''}</span>
+                            {item.summary ? <p>{item.summary}</p> : null}
+                            <span className="nb-analysis__match-meta">匹配线索：{item.matchedBy.join('、')}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="nb-analysis__hint">当前简报中没有找到足够相关的新闻，不会用无关内容填充结果。</p>}
+                  </div>
+                  <div className="nb-analysis__match-group">
+                    <h4>相关 Skills</h4>
+                    {radar.skillMatches.length ? (
+                      <ul className="nb-analysis__match-list">
+                        {radar.skillMatches.map((item) => (
+                          <li key={item.url}>
+                            <a href={item.url} target="_blank" rel="noopener noreferrer">{item.name}</a>
+                            {typeof item.stars === 'number' ? <span className="nb-analysis__match-meta"> · {item.stars.toLocaleString()} stars</span> : null}
+                            {item.description ? <p>{item.description}</p> : null}
+                            <span className="nb-analysis__match-meta">匹配线索：{item.matchedBy.join('、')}</span>
+                            <span className="nb-analysis__match-meta">仅完成简报元数据匹配；使用前仍需检查许可证、依赖、权限、网络访问和源代码。</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="nb-analysis__hint">当前简报中没有找到足够相关的 Skill，不会编造仓库推荐。</p>}
+                  </div>
+                </>
+              ) : null}
+              <div>
+                {analysis.trendQueries.length ? <p><strong>趋势检索关键词：</strong>{analysis.trendQueries.join(' · ')}</p> : null}
+                {analysis.skillQueries.length ? <p><strong>Skill 检索关键词：</strong>{analysis.skillQueries.join(' · ')}</p> : null}
+              </div>
             </div>
           ) : null}
           <p className="nb-analysis__disclaimer">{analysis.disclaimer}</p>
