@@ -65,6 +65,7 @@ jobs:
           IMAGE_MODEL: ${{ secrets.IMAGE_MODEL }}
           IMAGE_FALLBACK_MODELS: ${{ secrets.IMAGE_FALLBACK_MODELS }}
           IMAGE_PROVIDER_LABEL: ${{ secrets.IMAGE_PROVIDER_LABEL }}
+          IMAGE_PROVIDER: ${{ secrets.IMAGE_PROVIDER }}
           MAIL_API_BASE: ${{ secrets.MAIL_API_BASE }}
           MAIL_API_KEY: ${{ secrets.MAIL_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}

@@ -14,7 +14,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import worker from './cloud-worker.js';
+import worker, { imageConfig } from './cloud-worker.js';
 
 /* -------------------------------------------------------------------------- */
 /* 假 D1                                                                       */
@@ -384,6 +384,33 @@ async function callJson(path, options) {
 /* -------------------------------------------------------------------------- */
 /* 运维令牌                                                                    */
 /* -------------------------------------------------------------------------- */
+
+
+describe('Cloudflare Workers AI 生图配置', () => {
+  it('使用独立 IMAGE_* 配置，默认 FLUX.1 schnell，且不覆盖 DeepSeek 文本配置', () => {
+    const cfg = imageConfig({
+      AI_BASE_URL: 'https://api.deepseek.com',
+      AI_API_KEY: 'deepseek-test-key',
+      AI_MODEL: 'deepseek-flash',
+      IMAGE_PROVIDER: 'cloudflare',
+      IMAGE_BASE_URL: 'https://api.cloudflare.com/client/v4/accounts/test-account/ai/run',
+      IMAGE_API_KEY: 'cloudflare-test-token',
+    });
+    expect(cfg.provider).toBe('cloudflare');
+    expect(cfg.model).toBe('@cf/black-forest-labs/flux-1-schnell');
+    expect(cfg.baseUrl).toBe('https://api.cloudflare.com/client/v4/accounts/test-account/ai/run');
+    expect(cfg.apiKey).toBe('cloudflare-test-token');
+    expect(cfg.ready).toBe(true);
+  });
+
+  it('未提供 Cloudflare 图像 token 时如实标记为未配置', () => {
+    const cfg = imageConfig({
+      IMAGE_PROVIDER: 'cloudflare',
+      IMAGE_BASE_URL: 'https://api.cloudflare.com/client/v4/accounts/test-account/ai/run',
+    });
+    expect(cfg.ready).toBe(false);
+  });
+});
 
 describe('运维接口的令牌校验', () => {
   it('没有配置 ADMIN_TOKEN 时接口整体不可用（503），不返回任何账号数据', async () => {

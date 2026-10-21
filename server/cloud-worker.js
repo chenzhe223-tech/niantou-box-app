@@ -108,7 +108,7 @@ export const ZHIPU_DEFAULT_IMAGE_MODEL = 'cogview-3-flash';
  * 而是隐私提示失真。所以按服务商给默认名，缺变量也不会静默留空。
  */
 const PROVIDER_LABELS = { zhipu: '智谱 GLM', openai: 'OpenAI 兼容服务' };
-const IMAGE_PROVIDER_LABELS = { zhipu: '智谱 CogView', openai: 'OpenAI 兼容图像服务' };
+const IMAGE_PROVIDER_LABELS = { zhipu: '智谱 CogView', openai: 'OpenAI 兼容图像服务', cloudflare: 'Cloudflare Workers AI' };
 
 /**
  * 图片尺寸必须按服务商分别映射：OpenAI 的 1024x1365 智谱不认，
@@ -1476,7 +1476,7 @@ export function aiConfig(env) {
 /** 图像模型配置。同一个智谱 key 直接覆盖 CogView，不必再配第二把钥匙。 */
 export function imageConfig(env) {
   const source = env || {};
-  const explicitBase = (source.IMAGE_BASE_URL || source.AI_BASE_URL || '').trim();
+  const explicitBase = (source.IMAGE_BASE_URL || source.AI_BASE_URL || '').trim().replace(/\/+$/, '');
   const apiKey = (source.IMAGE_API_KEY || source.AI_API_KEY || '').trim();
   const provider = resolveProvider(
     source.IMAGE_PROVIDER || source.AI_PROVIDER,
@@ -1484,7 +1484,11 @@ export function imageConfig(env) {
     apiKey,
   );
   const baseUrl = (explicitBase || (provider === 'zhipu' ? ZHIPU_BASE_URL : '')).replace(/\/+$/, '');
-  const fallbackModel = provider === 'zhipu' && apiKey ? ZHIPU_DEFAULT_IMAGE_MODEL : '';
+  const fallbackModel = provider === 'zhipu' && apiKey
+    ? ZHIPU_DEFAULT_IMAGE_MODEL
+    : provider === 'cloudflare' && apiKey
+      ? '@cf/black-forest-labs/flux-1-schnell'
+      : '';
   const model = (source.IMAGE_MODEL || fallbackModel).trim();
   const models = modelChain(
     model,
@@ -2396,17 +2400,26 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
     let status = 0;
     let model = models[0];
     const tried = [];
+    let cloudflareInline = '';
+    let cloudflareMime = 'image/png';
     for (let m = 0; m < models.length; m += 1) {
       model = models[m];
       tried.push(model);
       const full = { model, prompt, size, n: 1 };
+      // Cloudflare Workers AI uses /ai/run/{model} and returns { result: { image: <base64> } },
+      // unlike OpenAI-compatible providers which use /images/generations and data[0].b64_json.
       const shapes =
-        cfg.provider === 'zhipu'
-          ? [{ ...full, watermark_enabled: false }, full, { model, prompt }]
-          : [{ ...full, response_format: 'b64_json' }, full];
+        cfg.provider === 'cloudflare'
+          ? [{ prompt, steps: 4 }]
+          : cfg.provider === 'zhipu'
+            ? [{ ...full, watermark_enabled: false }, full, { model, prompt }]
+            : [{ ...full, response_format: 'b64_json' }, full];
+      const endpoint = cfg.provider === 'cloudflare'
+        ? `${cfg.baseUrl}/${model}`
+        : `${cfg.baseUrl}/images/generations`;
 
       for (let i = 0; i < shapes.length; i += 1) {
-        const res = await fetch(`${cfg.baseUrl}/images/generations`, {
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
           body: JSON.stringify(shapes[i]),
@@ -2414,7 +2427,18 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
         });
         status = res.status;
         ok = res.ok;
-        text = await res.text();
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (ok && cfg.provider === 'cloudflare' && contentType.startsWith('image/')) {
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
+            return { ok: false, error: '图片文件异常，已停止返回。', detail: `bytes-${bytes.length}` };
+          }
+          cloudflareInline = bytesToBase64(bytes);
+          cloudflareMime = contentType.split(';')[0];
+          text = '';
+        } else {
+          text = await res.text();
+        }
         if (ok) break;
         // 只对「参数不被支持」退让；鉴权、余额、限流这类错误重试没有意义。
         const canRetry = i < shapes.length - 1 && status === 400;
@@ -2441,14 +2465,20 @@ async function generateImage(env, cfg, { prompt, aspect, trace }) {
 
     const parsed = parseJsonLoose(text);
     const first = parsed && Array.isArray(parsed.data) ? parsed.data[0] : null;
-    const inline = first ? first.b64_json || first.b64 || '' : '';
-    const remoteUrl = first && typeof first.url === 'string' ? first.url : '';
+    const inline = cfg.provider === 'cloudflare'
+      ? (cloudflareInline || parsed?.result?.image || parsed?.image || '')
+      : first ? first.b64_json || first.b64 || '' : '';
+    const remoteUrl = cfg.provider === 'cloudflare'
+      ? ''
+      : first && typeof first.url === 'string' ? first.url : '';
     if (!inline && !remoteUrl) {
       return { ok: false, error: '图像服务没有返回图片。', detail: 'empty-image-payload' };
     }
 
     let base64 = typeof inline === 'string' ? inline : '';
-    let mime = typeof first?.mime_type === 'string' && first.mime_type ? first.mime_type : 'image/png';
+    let mime = cfg.provider === 'cloudflare'
+      ? cloudflareMime
+      : typeof first?.mime_type === 'string' && first.mime_type ? first.mime_type : 'image/png';
     if (!base64 && remoteUrl) {
       const download = await fetch(remoteUrl);
       if (!download.ok) {

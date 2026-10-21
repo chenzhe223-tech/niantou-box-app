@@ -131,7 +131,7 @@ const SECRET_KEYS = [
   // 没配时这两个接口返回 503 ADMIN_TOKEN_NOT_CONFIGURED，绝不静默放行。
   'ADMIN_TOKEN',
 ];
-const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'PUBLIC_APP_URL'];
+const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'IMAGE_PROVIDER', 'PUBLIC_APP_URL'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
 const DEBUG_DETAIL = (process.env.NIANBOX_DEBUG_DETAIL || '').trim();
 
@@ -217,6 +217,15 @@ async function main() {
     type: 'secret_text',
   });
   console.log('5. 密钥已写入：IP_SALT');
+
+  // Cloudflare Workers AI REST API 的根地址由已确定的账号 ID 自动拼出，
+  // 用户只需配置 IMAGE_PROVIDER=cloudflare 与 IMAGE_API_KEY，不必再复制账号 ID 到另一个 secret。
+  if (
+    (process.env.IMAGE_PROVIDER || '').trim().toLowerCase() === 'cloudflare' &&
+    !(process.env.IMAGE_BASE_URL || '').trim()
+  ) {
+    process.env.IMAGE_BASE_URL = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`;
+  }
 
   const configured = [];
   for (const key of SECRET_KEYS) {
