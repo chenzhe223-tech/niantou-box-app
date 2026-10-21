@@ -22,6 +22,16 @@ const payload = {
       url: 'javascript:alert(1)',
     },
   ],
+  top5: [
+    {
+      title_zh: '谷歌加入亚马逊，用开发者工具冲击英伟达生态',
+      title_en: 'Google AI developer tools challenge Nvidia ecosystem',
+      what_zh: 'AI 开发者工具降低硬件迁移成本。',
+      source: 'TechCrunch AI',
+      source_url: 'https://techcrunch.com/google-ai-developer-tools',
+      published: '2026-10-21T06:30:00.000Z',
+    },
+  ],
   skills: [
     {
       name: 'sample/ai-app-builder',
@@ -58,6 +68,13 @@ describe('loadRadarMatches', () => {
     expect(result.skillMatches).toHaveLength(1);
     expect(result.skillMatches[0].url).toBe('https://github.com/sample/ai-app-builder');
     expect(result.skillMatches[0].matchedBy).toContain('AI app builder');
+  });
+
+  it('also searches editorial top-five records that use source_url and what_zh fields', async () => {
+    const result = await loadRadarMatches(['Nvidia ecosystem'], [], { fetcher: async () => response(payload), now });
+    expect(result.newsMatches).toHaveLength(1);
+    expect(result.newsMatches[0].url).toBe('https://techcrunch.com/google-ai-developer-tools');
+    expect(result.newsMatches[0].summary).toContain('硬件迁移成本');
   });
 
   it('marks old reports as stale instead of silently treating them as current', async () => {
