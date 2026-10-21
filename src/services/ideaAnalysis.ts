@@ -79,7 +79,7 @@ export async function analyzeIdea(input: IdeaAnalysisInput): Promise<IdeaAnalysi
       targetUsers: input.targetUsers?.slice(0, 300) ?? '',
       productForm: input.productForm ?? 'other',
     },
-    timeoutMs: 75_000,
+    timeoutMs: 105_000,
     retries: 0,
   });
 }
