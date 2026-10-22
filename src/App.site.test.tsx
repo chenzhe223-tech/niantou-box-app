@@ -57,7 +57,7 @@ describe('设置页与官网的对接', () => {
     vi.stubEnv('VITE_OFFICIAL_SITE_URL', '');
     renderSettings();
 
-    await screen.findByRole('heading', { level: 1, name: '设置与数据' });
+    await screen.findByRole('heading', { level: 1, name: '设置' });
     expect(screen.queryByText('关于念头盒')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /打开官网首页/ })).not.toBeInTheDocument();
   });
@@ -66,7 +66,7 @@ describe('设置页与官网的对接', () => {
     vi.stubEnv('VITE_OFFICIAL_SITE_URL', 'javascript:alert(1)');
     renderSettings();
 
-    await screen.findByRole('heading', { level: 1, name: '设置与数据' });
+    await screen.findByRole('heading', { level: 1, name: '设置' });
     expect(screen.queryByRole('link', { name: /打开官网首页/ })).not.toBeInTheDocument();
   });
 });
