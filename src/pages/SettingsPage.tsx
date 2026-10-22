@@ -293,14 +293,8 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
   return (
     <div className="nb-page">
       <div className="nb-page__head">
-        <h1 className="nb-page__title">设置与数据</h1>
-        <p className="nb-page__lead">
-          {sync.signedIn
-            ? '本机保存一份，登录的云端账号里也保存一份，随时可以导出备份。'
-            : sync.configured
-              ? '数据先保存在本机浏览器；登录云端账号后，手机和电脑可以共用同一份念头。'
-              : '数据保存在本机浏览器，随时可以导出备份。'}
-        </p>
+        <h1 className="nb-page__title">设置</h1>
+        <p className="nb-page__lead">管理账号、同步与数据偏好。</p>
       </div>
 
       <div className="nb-notice">
@@ -349,6 +343,12 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         </div>
       </section>
 
+      <details className="nb-disclosure">
+        <summary className="nb-disclosure__summary">
+          <span>通用与存储信息</span>
+          <span className="nb-disclosure__chevron" aria-hidden="true"><Icon name="chevron" size={18} /></span>
+        </summary>
+        <div className="nb-disclosure__body">
       <section className="nb-section" aria-labelledby="nb-settings-storage">
         <div className="nb-section__head">
           <h2 className="nb-section__title" id="nb-settings-storage">
@@ -424,6 +424,9 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
           </div>
         </section>
       ) : null}
+
+        </div>
+      </details>
 
       {/* 开发者看板入口：仅当构建时注入 DEV_DASHBOARD=1 时才存在，普通用户看不到。 */}
       {devDashboardEnabled ? (
