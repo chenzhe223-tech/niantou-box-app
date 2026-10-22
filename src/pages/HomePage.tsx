@@ -73,6 +73,17 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiIdeas, setAiIdeas] = useState<Idea[]>([]);
 
+  /**
+   * AI 增强生图的先决条件是已配置云端地址且已登录。
+   * 本机卡片创作仍可在没有云端能力时使用。
+   */
+  const posterReady = sync.configured && sync.signedIn;
+  const posterBlockedReason = !sync.configured
+    ? '这个构建没有配置云端地址'
+    : !sync.signedIn
+      ? '还没有登录云端账号'
+      : '';
+
   const activeIdeas = useMemo(
     () => ideas.filter((idea) => idea.deletedAt === null),
     [ideas],
