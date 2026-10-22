@@ -376,6 +376,9 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         </div>
       </section>
 
+        </div>
+      </details>
+
       <section className="nb-section" aria-labelledby="nb-settings-feedback">
         <div className="nb-section__head">
           <h2 className="nb-section__title" id="nb-settings-feedback">
@@ -424,9 +427,6 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
           </div>
         </section>
       ) : null}
-
-        </div>
-      </details>
 
       {/* 开发者看板入口：仅当构建时注入 DEV_DASHBOARD=1 时才存在，普通用户看不到。 */}
       {devDashboardEnabled ? (
