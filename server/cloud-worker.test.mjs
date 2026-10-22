@@ -254,6 +254,12 @@ function createDb() {
         changes: 0,
       };
     }
+    if (sql === "SELECT COUNT(*) AS count FROM service_log WHERE user_id = ? AND day = ? AND kind = 'topic-directions'") {
+      return {
+        rows: [{ count: tables.service_log.filter((row) => row.user_id === p[0] && row.day === p[1] && row.kind === 'topic-directions').length }],
+        changes: 0,
+      };
+    }
     if (sql.startsWith('INSERT INTO service_log')) {
       tables.service_log.push({
         id: p[0],
@@ -989,5 +995,63 @@ describe('POST /ai/analyze', () => {
     expect(result.body.analysis.plans.map((plan) => plan.id)).toEqual(['free', 'low_cost', 'commercial']);
     expect(JSON.stringify(db.tables.service_log)).not.toContain(rawIdea);
     expect(JSON.stringify(db.tables.service_log)).not.toContain('想法助手');
+  });
+});
+
+
+/* -------------------------------------------------------------------------- */
+/* DAVYLAB 选题方向：鉴权、配额与结构校验                                       */
+/* -------------------------------------------------------------------------- */
+
+describe('POST /ai/topic-directions', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('未登录时拒绝请求，不调用上游模型', async () => {
+    const db = createDb();
+    const env = makeEnv(db, { AI_PROVIDER: 'openai', AI_BASE_URL: 'https://api.example.com/v1', AI_API_KEY: 'test-key', AI_MODEL: 'test-model' });
+    const upstream = vi.fn();
+    vi.stubGlobal('fetch', upstream);
+    const result = await callJson('/ai/topic-directions', { method: 'POST', body: { input: '普通人如何用 AI 做产品' }, env });
+    expect(result.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('AI 未配置时明确返回 503，不伪造方向', async () => {
+    const db = createDb();
+    await seedAlice(db);
+    const env = makeEnv(db);
+    const login = await callJson('/auth/login', { method: 'POST', body: { email: ALICE_EMAIL, password: ALICE_PASSWORD }, env });
+    const result = await callJson('/ai/topic-directions', { method: 'POST', token: login.body.token, body: { input: '普通人如何用 AI 做产品' }, env });
+    expect(result.status).toBe(503);
+    expect(result.body.code).toBe('AI_NOT_CONFIGURED');
+    expect(result.body.directions).toBeUndefined();
+  });
+
+  it('返回结构化的真实方向并且不将原始念头写入服务日志', async () => {
+    const db = createDb();
+    await seedAlice(db);
+    const env = makeEnv(db, { AI_PROVIDER: 'openai', AI_BASE_URL: 'https://api.example.com/v1', AI_API_KEY: 'test-key', AI_MODEL: 'test-model' });
+    const login = await callJson('/auth/login', { method: 'POST', body: { email: ALICE_EMAIL, password: ALICE_PASSWORD }, env });
+    const directions = [1, 2, 3, 4].map((n) => ({
+      title: '选题方向 ' + n, shortLabel: '方向' + n, angle: '清楚的核心观点 ' + n,
+      audience: '希望用 AI 提升效率的普通读者', why: '能帮助读者解决具体问题',
+      outline: ['真实问题', '分析原因', '可执行方法'], format: '深度文章', visual: '编辑风格封面与示意图',
+    }));
+    const rawIdea = '用户私有创作念头-不应进入日志';
+    const upstream = vi.fn(async (_url, init) => {
+      const requestBody = JSON.parse(init.body);
+      expect(requestBody.messages.some((message) => String(message.content).includes(rawIdea))).toBe(true);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ directions }) } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', upstream);
+    const result = await callJson('/ai/topic-directions', { method: 'POST', token: login.body.token, body: { input: rawIdea }, env });
+    expect(result.status).toBe(200);
+    expect(result.body.configured).toBe(true);
+    expect(result.body.directions).toHaveLength(4);
+    expect(result.body.directions[0].outline).toHaveLength(3);
+    expect(JSON.stringify(db.tables.service_log)).not.toContain(rawIdea);
+    expect(JSON.stringify(db.tables.service_log)).not.toContain('选题方向 1');
   });
 });
