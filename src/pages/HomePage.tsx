@@ -73,6 +73,17 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiIdeas, setAiIdeas] = useState<Idea[]>([]);
 
+  /**
+   * AI 增强生图的先决条件是已配置云端地址且已登录。
+   * 本机卡片创作仍可在没有云端能力时使用。
+   */
+  const posterReady = sync.configured && sync.signedIn;
+  const posterBlockedReason = !sync.configured
+    ? '这个构建没有配置云端地址'
+    : !sync.signedIn
+      ? '还没有登录云端账号'
+      : '';
+
   const activeIdeas = useMemo(
     () => ideas.filter((idea) => idea.deletedAt === null),
     [ideas],
@@ -95,23 +106,6 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
     }
     return map;
   }, [activeProjects]);
-
-  /**
-   * AI 增强生图的先决条件是「配了云端地址」且「已登录」。
-   *
-   * 注意：这只是**AI 生图**的前提，不是「能不能做出一张图片」的前提。
-   * 没登录时用户照样可以在这台设备上制作本机念头卡片，所以入口按钮不会被禁用。
-   */
-  const posterReady = sync.configured && sync.signedIn;
-  /**
-   * 这里只说**原因**，句子的其余部分交给文案拼装。
-   * 空字符串表示 AI 增强生图可用；否则是「这台设备上 AI 生图为什么用不了」。
-   */
-  const posterBlockedReason = !sync.configured
-    ? '这个构建没有配置云端地址'
-    : !sync.signedIn
-      ? '还没有登录云端账号'
-      : '';
 
   /** 首页只展示最近三件作品，其余的走「查看全部」。 */
   const recentWorks = useMemo(() => works.works.slice(0, 3), [works.works]);
@@ -166,21 +160,6 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
     event.preventDefault();
     const created = await persistDraft();
     if (created) setSavedIdea(created);
-  };
-
-  /** 首页辅助入口 1：先存好，再直接把这条念头变成图片。 */
-  const handleQuickPoster = async () => {
-    if (!hasSavableContent(draft.value)) {
-      toast.push({
-        message: '先写下一句话，或从下面的最近念头里挑一条再生成图片。',
-        tone: 'info',
-      });
-      return;
-    }
-    const created = await persistDraft();
-    if (!created) return;
-    setSavedIdea(created);
-    navigate(paths.poster(created.id));
   };
 
   /** 首页辅助入口 2：先存好，再把这条念头交给 AI 工具整理。 */
@@ -306,18 +285,8 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
         </div>
 
         <div className="nb-quickstart">
-          <p className="nb-quickstart__title">记下来之后，还可以马上：</p>
+          <p className="nb-quickstart__title">记下之后，随时可以继续整理</p>
           <div className="nb-quickstart__row">
-            <Button
-              variant="secondary"
-              icon="image"
-              disabled={saving}
-              onClick={() => {
-                void handleQuickPoster();
-              }}
-            >
-              一键生成图片
-            </Button>
             <Button
               variant="secondary"
               icon="wand"
@@ -330,9 +299,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
             </Button>
           </div>
           <p className="nb-quickstart__note">
-            {posterReady
-              ? '这两个入口都会先把这句话原样存好，再继续下一步；生成失败也不会影响已经存下的内容。'
-              : `AI 增强生图需要云端配置、登录状态和可用的服务端模型，当前${posterBlockedReason}，所以暂时用不了。${LOCAL_CARD_HINT}两个入口都会先把这句话原样存好，再继续下一步。`}
+            图片创作统一放在念头详情和「我的作品」中，避免多个页面重复出现同一入口。
           </p>
         </div>
 

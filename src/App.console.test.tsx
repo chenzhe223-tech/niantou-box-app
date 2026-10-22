@@ -121,7 +121,7 @@ describe('控制台与未处理异常', () => {
     await user.click(screen.getByRole('link', { name: '回收站' }));
     await screen.findByRole('heading', { level: 1, name: '回收站' });
     await user.click(screen.getByRole('link', { name: '设置' }));
-    await screen.findByRole('heading', { level: 1, name: '设置与数据' });
+    await screen.findByRole('heading', { level: 1, name: '设置' });
 
     await expectCleanConsole();
   });

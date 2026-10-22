@@ -232,49 +232,60 @@ export function ProjectDetailPage({
           rows={3}
           placeholder="这个项目要解决什么具体问题？"
         />
-        <TextField
-          label="目标用户"
-          value={current.targetUsers}
-          onChange={(value) => update('targetUsers', value)}
-          placeholder="谁会真正用得上它？"
-        />
-        <TextArea
-          label="核心功能"
-          value={current.features}
-          onChange={(value) => update('features', value)}
-          rows={4}
-          placeholder="一行一个功能点，例如：&#10;- 进入停车场后记录车位编号&#10;- 离场时一键导航回车位"
-        />
         <div className="nb-form__grid nb-form__grid--two">
-          <SelectField
-            label="产品形态"
-            value={current.productForm}
-            onChange={(value) => update('productForm', value)}
-            options={PRODUCT_FORM_OPTIONS}
-          />
           <SelectField
             label="当前进度"
             value={current.progress}
             onChange={(value) => update('progress', value)}
             options={PROGRESS_OPTIONS}
           />
+          <SelectField
+            label="产品形态（可选）"
+            value={current.productForm}
+            onChange={(value) => update('productForm', value)}
+            options={PRODUCT_FORM_OPTIONS}
+          />
         </div>
-        <TextField
-          label="GitHub 仓库 URL"
-          type="url"
-          inputMode="url"
-          value={current.repoUrl}
-          onChange={(value) => update('repoUrl', value)}
-          placeholder="https://github.com/你的用户名/仓库名"
-        />
-        <TextField
-          label="已发布网址"
-          type="url"
-          inputMode="url"
-          value={current.liveUrl}
-          onChange={(value) => update('liveUrl', value)}
-          placeholder="https://"
-        />
+
+        <details className="nb-disclosure">
+          <summary className="nb-disclosure__summary">
+            <span>补充信息（可选）</span>
+            <span className="nb-disclosure__chevron" aria-hidden="true">
+              <Icon name="chevron" size={18} />
+            </span>
+          </summary>
+          <div className="nb-disclosure__body nb-stack">
+            <TextField
+              label="目标用户"
+              value={current.targetUsers}
+              onChange={(value) => update('targetUsers', value)}
+              placeholder="谁会真正用得上它？"
+            />
+            <TextArea
+              label="核心功能"
+              value={current.features}
+              onChange={(value) => update('features', value)}
+              rows={3}
+              placeholder="可以简单写下最重要的功能，不必一次写全。"
+            />
+            <TextField
+              label="GitHub 仓库 URL"
+              type="url"
+              inputMode="url"
+              value={current.repoUrl}
+              onChange={(value) => update('repoUrl', value)}
+              placeholder="https://github.com/你的用户名/仓库名"
+            />
+            <TextField
+              label="已发布网址"
+              type="url"
+              inputMode="url"
+              value={current.liveUrl}
+              onChange={(value) => update('liveUrl', value)}
+              placeholder="https://"
+            />
+          </div>
+        </details>
 
         {error ? (
           <p className="nb-notice nb-notice--danger" role="alert">

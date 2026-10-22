@@ -425,34 +425,21 @@ describe('首次使用：保存成功之后的下一步', () => {
 });
 
 describe('首页首屏的创作入口', () => {
-  it('首屏直接给出「一键生成图片」与「让 AI 帮我整理」两个入口', async () => {
+  it('首屏保留轻量 AI 整理入口，不重复展示生图按钮', async () => {
     renderApp();
     await screen.findByLabelText('记下一句话就好……');
 
-    expect(screen.getByText('记下来之后，还可以马上：')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '一键生成图片' })).toBeInTheDocument();
+    expect(screen.getByText('记下之后，随时可以继续整理')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '让 AI 帮我整理' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '一键生成图片' })).not.toBeInTheDocument();
   });
 
-  it('输入框为空时点生图只提示先写内容，不会产生任何记录', async () => {
-    const { user } = renderApp();
-    await screen.findByLabelText('记下一句话就好……');
-
-    await user.click(screen.getByRole('button', { name: '一键生成图片' }));
-
-    expect(
-      await screen.findByText('先写下一句话，或从下面的最近念头里挑一条再生成图片。'),
-    ).toBeInTheDocument();
-    expect(await listIdeas()).toHaveLength(0);
-  });
-
-  it('点「一键生成图片」会先把这句话原样存好，再进入生图页', async () => {
+  it('保存念头后仍可从成功提示进入生图页，原文会先被保存', async () => {
     const { user } = renderApp();
     const textarea = await screen.findByLabelText('记下一句话就好……');
     await user.type(textarea, '车库入口的空位雷达');
-    await user.click(screen.getByRole('button', { name: '一键生成图片' }));
+    await user.click(screen.getByRole('button', { name: '记下这个念头' }));
 
-    // 跳转必须建立在「原文已经真的写进数据库」之上。
     const stored = await waitFor(async () => {
       const list = await listIdeas();
       expect(list).toHaveLength(1);
@@ -460,24 +447,12 @@ describe('首页首屏的创作入口', () => {
     });
     expect(stored.content).toBe('车库入口的空位雷达');
 
+    await screen.findByRole('region', { name: '已经收好了。接下来想做什么？' });
+    await user.click(screen.getByRole('button', { name: '把它变成图片' }));
+
     expect(
       await screen.findByRole('heading', { level: 1, name: '把这个念头变成图片' }),
     ).toBeInTheDocument();
-
-    // 生图页要么能真的生成，要么如实说明为什么不能；原文始终原样保留。
-    // 注意：不能生成时页面仍然给出「本机制作的念头卡片」，不会停在死路上。
-    const sync = getCloudState();
-    if (!sync.configured) {
-      expect(await screen.findByText('这个构建没有配置云端地址')).toBeInTheDocument();
-      expect(
-        await screen.findByText('现在能做的是「本机制作的念头卡片」'),
-      ).toBeInTheDocument();
-    } else if (!sync.signedIn) {
-      expect(await screen.findByText('AI 增强生图需要先登录')).toBeInTheDocument();
-      expect(
-        await screen.findByText('现在能做的是「本机制作的念头卡片」'),
-      ).toBeInTheDocument();
-    }
     expect((await getIdea(stored.id))?.content).toBe('车库入口的空位雷达');
   });
 
