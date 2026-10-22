@@ -451,6 +451,14 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
         </section>
       ) : null}
 
+      <details className="nb-disclosure">
+        <summary className="nb-disclosure__summary">
+          <span>隐私、备份与数据管理</span>
+          <span className="nb-disclosure__chevron" aria-hidden="true">
+            <Icon name="chevron" size={18} />
+          </span>
+        </summary>
+        <div className="nb-disclosure__body">
       <section className="nb-section" aria-labelledby="nb-settings-backup">
         <div className="nb-section__head">
           <h2 className="nb-section__title" id="nb-settings-backup">
@@ -558,6 +566,9 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
           </p>
         </div>
       </section>
+
+        </div>
+      </details>
 
       {/* 与官网的对接：官网地址由构建环境变量注入，未配置时整块不渲染。 */}
       {officialSiteUrl ? (
