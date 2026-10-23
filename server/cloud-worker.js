@@ -1384,7 +1384,7 @@ async function handlePush(request, env) {
   // Archive only newly-created ideas after explicit enablement. Historical ideas are never backfilled.
   for (const candidate of archiveCandidates) {
     try {
-      const archive = await queueVaultIdeaIfEligible(env, user, candidate.idea, candidate.seq);
+      const archive = await queueVaultIdeaIfEligible(env, user, candidate.idea, candidate.seq, false);
       if (archive) {
         const result = results.find((item) => item.entity === 'idea' && item.id === candidate.id);
         if (result) result.archiveStatus = archive.status;
@@ -3044,7 +3044,7 @@ async function handleVaultRetry(request, env) {
 }
 
 
-async function queueVaultIdeaIfEligible(env, user, idea, seq) {
+async function queueVaultIdeaIfEligible(env, user, idea, seq, processImmediately = true) {
   const settings = await env.DB.prepare(
     'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq FROM vault_settings WHERE user_id = ?',
   ).bind(user.id).first();
@@ -3061,6 +3061,10 @@ async function queueVaultIdeaIfEligible(env, user, idea, seq) {
       (user_id, operation_id, entity, entity_id, entity_version, operation, payload_json, payload_sha256, status, attempts, next_attempt_at, created_at, updated_at)
      VALUES (?, ?, 'idea', ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
   ).bind(user.id, operationId, String(idea.id), version, idea.deletedAt == null ? 'upsert' : 'soft_delete', payloadJson, payloadHash, at, at, at).run();
+  const existingJob = await env.DB.prepare(
+    'SELECT status FROM vault_archive_jobs WHERE user_id = ? AND operation_id = ?',
+  ).bind(user.id, operationId).first();
+  if (!processImmediately || existingJob?.status === 'archived') return { status: existingJob?.status || 'pending' };
   try {
     const response = await processVaultArchiveJob(env, user, operationId);
     const body = await response.json();
