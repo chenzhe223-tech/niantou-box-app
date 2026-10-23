@@ -2426,7 +2426,7 @@ html[data-nb-keyboard='open'] .nb-tabbar {
   border: 1px solid rgba(var(--rgb-surface), 0.58);
   border-radius: 999px;
   padding: 5px 9px;
-  color: #292632;
+  color: var(--nb-ink);
   background: rgba(var(--rgb-surface), 0.88);
   backdrop-filter: blur(12px);
   font-size: 11px;
@@ -2449,7 +2449,7 @@ html[data-nb-keyboard='open'] .nb-tabbar {
   border-radius: 16px;
   text-align: center;
   color: var(--nb-ink-muted);
-  background: rgb(255 253 250 / 58%);
+  background: rgba(var(--rgb-surface), 0.58);
 }
 .nb-github-library__prompt {
   max-height: 280px;
