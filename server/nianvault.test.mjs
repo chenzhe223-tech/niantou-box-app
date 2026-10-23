@@ -53,7 +53,7 @@ describe('NianVault canonical archive contract', () => {
     expect(result.created_at).toBe(idea.createdAt);
     expect(result.updated_at).toBe(idea.updatedAt);
     expect(result.source).toEqual({ app: 'nianbox', record_id: idea.id });
-    expect(result.operation_id).toBe('new-idea:idea_abc123');
+    expect(result.operation_id).toBe('idea:idea_abc123:v1792720800001');
     expect(result).not.toHaveProperty('owner_id');
   });
 
