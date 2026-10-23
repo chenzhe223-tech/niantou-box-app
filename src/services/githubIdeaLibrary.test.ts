@@ -28,7 +28,7 @@ describe('buildPlatformPrompts', () => {
       '念头项目',
       'release/2026',
     );
-    expect(prompts.ChatGPT).toContain('https://github.com/DavyLab/nian-ideas/blob/release/2026/projects/%E5%BF%B5%E5%A4%B4%E9%A1%B9%E7%9B%AE/README.md');
+    expect(prompts.ChatGPT).toContain('https://github.com/DavyLab/nian-ideas/blob/release%2F2026/projects/%E5%BF%B5%E5%A4%B4%E9%A1%B9%E7%9B%AE/README.md');
     expect(prompts.Codex).toContain('当前工作区启动');
     expect(prompts.WorkBuddy).toContain('持续执行的开发任务');
     expect(prompts.ChatGPT).toContain('不要假装已经读过');
