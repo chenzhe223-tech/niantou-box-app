@@ -24,6 +24,8 @@
  *   IMAGE_PROVIDER_LABEL                         展示给用户看的图像服务名称
  *   MAIL_API_BASE / MAIL_API_KEY / MAIL_FROM     服务端发信（Resend 兼容）
  *   ADMIN_TOKEN                                  运维令牌：/admin/* 用它换一次性密码重置链接
+ *   NIANVAULT_GITHUB_TOKEN                        私有仓库最小权限令牌（Worker Secret）
+ *   NIANVAULT_REPO / NIANVAULT_OWNER_USER_ID      私有仓库名 / 唯一所有者的 NianBox 账号 ID
  * 一个都没配也没关系：接口会如实返回 configured:false，前端不会伪造成功。
  */
 
@@ -130,8 +132,10 @@ const SECRET_KEYS = [
   // 运维令牌：配了之后 /admin/users 与 /admin/password-reset 才可用；
   // 没配时这两个接口返回 503 ADMIN_TOKEN_NOT_CONFIGURED，绝不静默放行。
   'ADMIN_TOKEN',
+  // NianVault GitHub private-repository access; server secret only.
+  'NIANVAULT_GITHUB_TOKEN',
 ];
-const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'IMAGE_PROVIDER', 'PUBLIC_APP_URL'];
+const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'IMAGE_PROVIDER', 'PUBLIC_APP_URL', 'NIANVAULT_REPO', 'NIANVAULT_OWNER_USER_ID'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
 const DEBUG_DETAIL = (process.env.NIANBOX_DEBUG_DETAIL || '').trim();
 
@@ -177,11 +181,11 @@ async function main() {
     await cf('POST', `/accounts/${accountId}/d1/database/${dbId}/query`, { sql });
   }
   const check = await cf('POST', `/accounts/${accountId}/d1/database/${dbId}/query`, {
-    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','ideas','projects','user_state','meta','password_reset_tokens')",
+    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','ideas','projects','user_state','meta','password_reset_tokens','vault_settings','vault_archive_jobs','vault_entity_heads','vault_audit_events')",
   });
   const tables = (check?.[0]?.results || []).map((r) => r.name).sort();
   console.log('3. 建表完成，现有表：', tables.join(', ') || '(空)');
-  for (const required of ['users', 'sessions', 'ideas', 'projects', 'password_reset_tokens']) {
+  for (const required of ['users', 'sessions', 'ideas', 'projects', 'password_reset_tokens', 'vault_settings', 'vault_archive_jobs', 'vault_entity_heads', 'vault_audit_events']) {
     if (!tables.includes(required)) throw new Error(`建表没有生效：缺少 ${required}`);
   }
 
@@ -189,6 +193,8 @@ async function main() {
   const metadata = {
     main_module: 'cloud-worker.js',
     compatibility_date: COMPAT,
+    // Retry durable NianVault archive jobs even when no client is online.
+    triggers: { crons: ['*/5 * * * *'] },
     bindings: [
       { type: 'd1', name: 'DB', id: dbId },
       { type: 'plain_text', name: 'TZ_OFFSET_HOURS', text: TZ },

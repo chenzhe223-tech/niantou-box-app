@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nianvault:schema:thought:v1",
+  "title": "NianVault Thought",
+  "description": "Canonical versioned archival representation of a NianBox idea. Map fields from the current Idea model; do not use this schema to rewrite existing records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "content",
+    "category",
+    "category_source",
+    "status",
+    "tags",
+    "pinned",
+    "notes",
+    "problem",
+    "target_users",
+    "product_form",
+    "project_url",
+    "project_id",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+    "source",
+    "version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200000
+    },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "life",
+        "app",
+        "skill",
+        "web",
+        "other",
+        null
+      ]
+    },
+    "category_source": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "ai",
+        "rules",
+        "manual",
+        null
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "inbox",
+        "research",
+        "ready",
+        "building",
+        "done",
+        "paused"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "pinned": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 50000
+    },
+    "problem": {
+      "type": "string",
+      "maxLength": 50000
+    },
+    "target_users": {
+      "type": "string",
+      "maxLength": 50000
+    },
+    "product_form": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "app",
+        "website",
+        "miniprogram",
+        "skill",
+        "other",
+        null
+      ]
+    },
+    "project_url": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "created_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTC epoch milliseconds; preserve the original creation time."
+    },
+    "updated_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTC epoch milliseconds."
+    },
+    "deleted_at": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "record_id"
+      ],
+      "properties": {
+        "app": {
+          "const": "nianbox"
+        },
+        "record_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "device_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        }
+      }
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "operation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    }
+  }
+}
