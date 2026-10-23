@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertVaultOwner,
   canonicalVaultThought,
   vaultPathForIdea,
   vaultRepository,
 } from './cloud-worker.js';
 
 describe('NianVault canonical archive contract', () => {
+  it('restricts the vault to one configured owner account', () => {
+    expect(() => assertVaultOwner({ id: 'user-a' }, {})).toThrow(/尚未配置唯一所有者/);
+    expect(() => assertVaultOwner({ id: 'user-b' }, { NIANVAULT_OWNER_USER_ID: 'user-a' })).toThrow(/仅授权给所有者/);
+    expect(assertVaultOwner({ id: 'user-a' }, { NIANVAULT_OWNER_USER_ID: 'user-a' })).toBe(true);
+  });
   it('maps existing NianBox categories to stable, non-title-based paths', () => {
     expect(vaultPathForIdea({ id: 'idea_123', category: 'app' })).toBe('thoughts/app/idea_123.json');
     expect(vaultPathForIdea({ id: 'idea_124', category: null })).toBe('thoughts/other/idea_124.json');
