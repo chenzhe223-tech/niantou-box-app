@@ -2978,8 +2978,13 @@ async function processVaultArchiveJob(env, user, operationId) {
             throw new HttpError(409, '仓库中的念头版本更新，已阻止旧版本覆盖。', 'VAULT_STALE_VERSION');
           }
           if (decoded === bodyText) {
-            await markVaultArchived(env, user.id, job, path, currentSha, String(current.commit?.sha || ''), at);
-            return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha: String(current.commit?.sha || ''), path, duplicate: true });
+            const historyRes = await fetch('https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(path) + '&per_page=1', { method: 'GET', headers });
+            if (!historyRes.ok) throw new HttpError(503, '文件内容一致，但暂时无法验证对应 Git 提交。', 'VAULT_COMMIT_UNVERIFIED');
+            const history = await historyRes.json();
+            const observedCommitSha = Array.isArray(history) ? String(history[0]?.sha || '') : '';
+            if (!observedCommitSha) throw new HttpError(503, '文件内容一致，但未能确认 Git 提交。', 'VAULT_COMMIT_UNVERIFIED');
+            await markVaultArchived(env, user.id, job, path, currentSha, observedCommitSha, at);
+            return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha: observedCommitSha, path, duplicate: true });
           }
         } catch (error) { if (error instanceof HttpError) throw error; /* Malformed content is handled as a conditional update below. */ }
       }
@@ -3005,6 +3010,15 @@ async function processVaultArchiveJob(env, user, operationId) {
     const commitSha = String(result.commit?.sha || '');
     const blobSha = String(result.content?.sha || '');
     if (!commitSha || !blobSha) throw new Error('github_response_missing_commit');
+    const verifyRes = await fetch(apiBase, { method: 'GET', headers });
+    if (!verifyRes.ok) throw new Error('github_post_write_verify_' + verifyRes.status);
+    const verifyFile = await verifyRes.json();
+    const verifyContent = new TextDecoder().decode(
+      Uint8Array.from(atob(String(verifyFile.content || '').replace(/\\s/g, '')), c => c.charCodeAt(0)),
+    ).trim();
+    if (String(verifyFile.sha || '') !== blobSha || verifyContent !== bodyText) {
+      throw new Error('github_post_write_content_mismatch');
+    }
     await markVaultArchived(env, user.id, job, path, blobSha, commitSha, at);
     return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha, path, duplicate: false });
   } catch (error) {
