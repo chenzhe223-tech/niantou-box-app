@@ -116,7 +116,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   /** 首页把最近作品做成横向「专辑架」，最多读取 8 张封面，避免一次载入整库图片。 */
   const recentWorks = useMemo(() => works.works.slice(0, 8), [works.works]);
   const [workCategoryFilter, setWorkCategoryFilter] = useState<'all' | 'uncategorized' | IdeaCategory>('all');
-  const ideaById = useMemo(() => new Map(ideas.map((item) => [item.id, item])), [ideas]);
+  const ideaById = useMemo(() => new Map<string, Idea>(ideas.map((item) => [item.id, item] as const)), [ideas]);
   const workCategoryChoices = useMemo(() => {
     const present = new Set(recentWorks.map((work) => ideaById.get(work.ideaId)?.category ?? 'uncategorized'));
     return [
