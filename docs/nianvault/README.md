@@ -35,7 +35,7 @@ nianvault/
   schema/thought.schema.json
   schema/project.schema.json
   index/manifest.json
-  thoughts/{life,app,skill,web,other}/<stable-id>.json
+  thoughts/<stable-id>.json
   projects/<stable-id>.json
   docs/{api-contract,security,recovery}.md
   .github/workflows/validate-vault.yml
