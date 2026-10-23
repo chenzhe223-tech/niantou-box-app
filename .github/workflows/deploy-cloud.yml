@@ -74,6 +74,7 @@ jobs:
           # 运维令牌：只写进 Worker secret，用于 /admin/* 接口。留空则 /admin/* 返回 503。
           ADMIN_TOKEN: ${{ secrets.NIANBOX_ADMIN_TOKEN }}
           PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/' }}
+          NIANVAULT_REPO: ${{ vars.NIANVAULT_REPO }}
         run: node server/deploy-cloud.mjs --emit-result=cloud-result.json
 
       - name: 上传部署结果
