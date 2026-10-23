@@ -133,7 +133,7 @@ const SECRET_KEYS = [
   // NianVault GitHub private-repository access; server secret only.
   'NIANVAULT_GITHUB_TOKEN',
 ];
-const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'IMAGE_PROVIDER', 'PUBLIC_APP_URL', 'NIANVAULT_REPO'];
+const PLAIN_KEYS = ['AI_PROVIDER_LABEL', 'IMAGE_PROVIDER_LABEL', 'IMAGE_PROVIDER', 'PUBLIC_APP_URL', 'NIANVAULT_REPO', 'NIANVAULT_OWNER_USER_ID'];
 /** 排障开关：设成 1 时 500 响应会带上内部错误摘要（不含请求体）。 */
 const DEBUG_DETAIL = (process.env.NIANBOX_DEBUG_DETAIL || '').trim();
 
