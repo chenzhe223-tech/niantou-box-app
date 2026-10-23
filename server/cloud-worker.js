@@ -2810,10 +2810,10 @@ export function vaultRepository(env) {
 }
 
 export function vaultPathForIdea(idea) {
-  const category = ({ life: 'life', app: 'app', skill: 'skill', web: 'web', other: 'other' })[idea.category] || 'other';
+  // Stable ID-only paths mean category edits never create duplicate archive files.
   const id = String(idea.id || '');
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new HttpError(422, '念头编号不符合归档规范。', 'VAULT_BAD_ID');
-  return `thoughts/${category}/${id}.json`;
+  return `thoughts/${id}.json`;
 }
 
 export function canonicalVaultThought(idea, user, operationId, version) {
