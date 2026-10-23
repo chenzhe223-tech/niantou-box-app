@@ -12,6 +12,13 @@ interface VaultStatus {
   githubCredentialConfigured: boolean;
   repository: string | null;
   jobs: Record<string, number>;
+  recentJobs: Array<{
+    operationId: string;
+    entityId: string;
+    status: string;
+    errorCode: string;
+    updatedAt: number;
+  }>;
 }
 
 export function NianVaultPanel() {
@@ -80,7 +87,37 @@ export function NianVaultPanel() {
     }
   };
 
+  const retryJob = async (operationId: string) => {
+    const token = getCloudToken();
+    if (!token || busy) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await cloudRequest<{ archiveStatus?: string; ok?: boolean }>('/vault/retry', {
+        method: 'POST',
+        token,
+        body: { operation_id: operationId },
+      });
+      setNotice(result.archiveStatus === 'archived' ? '归档已完成。' : '已处理重试请求，请刷新查看真实状态。');
+      await refresh();
+    } catch (caught) {
+      setError(describeCloudError(caught));
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const jobCount = (key: string) => status?.jobs?.[key] || 0;
+  const jobLabel = (value: string) => ({
+    pending: '待处理',
+    processing: '处理中',
+    retrying: '自动重试',
+    archived: '已归档',
+    conflict: '版本冲突',
+    failed: '失败',
+  }[value] || value);
 
   return (
     <section className="nb-section" aria-labelledby="nb-nianvault-title">
@@ -115,6 +152,28 @@ export function NianVaultPanel() {
                 <p className="nb-kv">
                   新建念头会自动进入归档队列；GitHub 暂时不可用时，念头仍保存在云端，系统会自动重试。
                 </p>
+                {status.recentJobs.length > 0 ? (
+                  <div className="nb-stack nb-stack--tight">
+                    <p className="nb-kv"><strong>最近归档任务</strong></p>
+                    <ul className="nb-kvlist">
+                      {status.recentJobs.map((job) => (
+                        <li className="nb-kvlist__row" key={job.operationId}>
+                          <span className="nb-kvlist__label">
+                            {job.entityId.slice(-18)} · {jobLabel(job.status)}
+                            {job.errorCode ? <small> · {job.errorCode}</small> : null}
+                          </span>
+                          {job.status === 'failed' || job.status === 'retrying' ? (
+                            <Button variant="ghost" icon="refresh" disabled={busy} onClick={() => void retryJob(job.operationId)}>
+                              重试
+                            </Button>
+                          ) : job.status === 'conflict' ? (
+                            <span className="nb-kvlist__value">需人工检查</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="nb-kv">
