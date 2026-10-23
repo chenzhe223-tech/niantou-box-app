@@ -129,6 +129,9 @@ const DEFAULT_IMAGE_DAILY_LIMIT = 30;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(processDueVaultJobs(env));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -2944,7 +2947,7 @@ async function processVaultArchiveJob(env, user, operationId) {
             await markVaultArchived(env, user.id, job, path, currentSha, String(current.commit?.sha || ''), at);
             return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha: String(current.commit?.sha || ''), path, duplicate: true });
           }
-        } catch { /* A malformed response is handled as a normal conditional update below. */ }
+        } catch (error) { if (error instanceof HttpError) throw error; /* Malformed content is handled as a conditional update below. */ }
       }
     } else if (getRes.status !== 404) {
       throw new Error('github_read_' + getRes.status);
@@ -2972,10 +2975,14 @@ async function processVaultArchiveJob(env, user, operationId) {
     return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha, path, duplicate: false });
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    const retryAt = at + 60000;
+    const attempt = Math.max(1, num(job.attempts) + 1);
+    const exhausted = attempt >= 12;
+    const backoffMs = Math.min(60000 * (2 ** Math.min(attempt - 1, 8)), 6 * 60 * 60 * 1000);
+    const jitterMs = Math.floor(Math.random() * 15000);
+    const retryAt = nowMs() + backoffMs + jitterMs;
     await env.DB.prepare(
-      "UPDATE vault_archive_jobs SET status = 'retrying', last_error_code = ?, next_attempt_at = ?, updated_at = ? WHERE user_id = ? AND operation_id = ?",
-    ).bind(String(error?.message || 'github_error').slice(0, 80), retryAt, nowMs(), user.id, operationId).run();
+      "UPDATE vault_archive_jobs SET status = ?, last_error_code = ?, next_attempt_at = ?, updated_at = ? WHERE user_id = ? AND operation_id = ?",
+    ).bind(exhausted ? 'failed' : 'retrying', String(error?.message || 'github_error').slice(0, 80), retryAt, nowMs(), user.id, operationId).run();
     throw new HttpError(503, 'NianVault 暂时无法归档；任务已保留，可稍后重试。', 'VAULT_ARCHIVE_RETRYING');
   }
 }
@@ -3039,4 +3046,26 @@ async function queueVaultIdeaIfEligible(env, user, idea, seq) {
   } catch {
     return { status: 'pending' };
   }
+}
+
+async function processDueVaultJobs(env) {
+  const at = nowMs();
+  const due = await env.DB.prepare(
+    `SELECT user_id AS userId, operation_id AS operationId
+       FROM vault_archive_jobs
+      WHERE ((status IN ('pending', 'retrying') AND next_attempt_at <= ?)
+          OR (status = 'processing' AND updated_at <= ?))
+        AND attempts < 12
+      ORDER BY created_at ASC LIMIT 10`,
+  ).bind(at, at - 5 * 60 * 1000).all();
+  for (const row of due.results || []) {
+    try {
+      await processVaultArchiveJob(env, { id: row.userId }, row.operationId);
+    } catch {
+      // The durable job retains its status/error code; one failure must not stop the batch.
+    }
+  }
+  await env.DB.prepare(
+    "UPDATE vault_archive_jobs SET status = 'failed', last_error_code = COALESCE(last_error_code, 'retry_limit_exceeded'), updated_at = ? WHERE status IN ('pending', 'retrying', 'processing') AND attempts >= 12",
+  ).bind(at).run();
 }
