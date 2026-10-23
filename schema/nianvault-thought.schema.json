@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nianvault.invalid/schema/thought.schema.json",
+  "$id": "urn:nianvault:schema:thought:v1",
   "title": "NianVault Thought",
   "description": "Canonical versioned archival representation of a NianBox idea. Map fields from the current Idea model; do not use this schema to rewrite existing records.",
   "type": "object",
