@@ -2,20 +2,20 @@
 
 Status: design contract; endpoints are not considered live until implemented and verified against the deployed Worker.
 
-Base path: `/v1/vault`. Authentication must reuse the authenticated NianBox account/session. Every operation scopes all database reads and writes to the authenticated server-derived `user_id`; never trust a client-provided owner ID.
+Base path: `/vault`. These routes are added in the NianBox cloud Worker; standalone repository/app setup remains a separate release gate. Authentication must reuse the authenticated NianBox account/session. Every operation scopes all database reads and writes to the authenticated server-derived `user_id`; never trust a client-provided owner ID.
 
 ## Endpoints
 
-- `GET /health` — service health, no private data.
-- `GET /thoughts?cursor=&limit=&category=&status=&q=` — paginated owner-only list.
-- `GET /thoughts/:id` — retrieve one thought.
-- `POST /thoughts` — create/queue archive; requires `Idempotency-Key`.
-- `PATCH /thoughts/:id` — update with `If-Match` or `expected_version`.
-- `DELETE /thoughts/:id` — soft-delete tombstone; do not remove Git history.
-- `POST /thoughts/:id/restore` — restore if the expected version matches.
-- `GET /sync/status` — queue counts and last verified archive time.
-- `POST /sync/retry` — retry eligible failed jobs for the current user only.
-- `GET /export` — owner-only portable export, rate-limited and audited.
+- `GET /vault/status` — enablement and archive job status. — service health, no private data.
+- `GET /vault/thoughts?before_seq=&limit=&category=&status=&q=` — paginated owner-only list.
+- `GET /vault/thoughts/:id` — retrieve one eligible thought.
+- `POST /vault/thoughts` — create/queue archive; requires a stable `id` or `Idempotency-Key`.
+- `PATCH /vault/thoughts/:id` — update with `expected_version` in the request body.
+- `DELETE /vault/thoughts/:id` — soft-delete tombstone; do not remove Git history.
+- `POST /vault/thoughts/:id/restore` — restore if the expected version matches.
+- `GET /vault/status` — queue counts and last verified archive time.
+- `POST /vault/retry` — retry eligible failed jobs for the current user only.
+- `POST /vault/enable` — explicitly enable the archive without historical backfill.\n- `POST /vault/archive` — archive an eligible existing new thought by ID.\n- `POST /vault/retry` — retry a job by operation ID.
 
 ## Response rules
 
