@@ -14,6 +14,13 @@ import { EmptyState } from '../components/EmptyState';
 import { SelectField, TextArea, TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/Toast';
+import { copyText } from '../services/aiTools';
+import {
+  isGitHubLibraryConnected,
+  pushProjectToGitHubLibrary,
+  type GitHubLibraryPushResult,
+  type GitHubPlatform,
+} from '../services/githubIdeaLibrary';
 import { softDeleteProject, toNianBoxError, updateProject } from '../services/storage';
 import { PRODUCT_FORMS, displayTitle, type ProductForm } from '../types/idea';
 import { PROJECT_PROGRESSES, progressLabel, type Project, type ProjectProgress } from '../types/project';
@@ -77,6 +84,10 @@ export function ProjectDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [pushingToLibrary, setPushingToLibrary] = useState(false);
+  const [libraryResult, setLibraryResult] = useState<GitHubLibraryPushResult | null>(null);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [promptPlatform, setPromptPlatform] = useState<GitHubPlatform>('Codex');
 
   if (!project) {
     return (
@@ -98,6 +109,51 @@ export function ProjectDetailPage({
   const stored = toFormState(project);
   const current = form ?? stored;
   const dirty = JSON.stringify(current) !== JSON.stringify(stored);
+
+  const handleSaveToGitHubLibrary = async () => {
+    if (pushingToLibrary) return;
+    if (!sourceIdea) {
+      setLibraryError('关联的原始念头不存在，暂时无法生成完整项目说明。');
+      return;
+    }
+    if (!isGitHubLibraryConnected()) {
+      toast.push({ message: '请先在设置中关联 GitHub 念头库，并完成本次浏览器会话授权。', tone: 'info' });
+      navigate(paths.settings);
+      return;
+    }
+    setPushingToLibrary(true);
+    setLibraryError(null);
+    try {
+      const payload: Project = {
+        ...project,
+        name: current.name.trim() || project.name,
+        problem: current.problem,
+        targetUsers: current.targetUsers,
+        features: current.features,
+        productForm: current.productForm === 'none' ? null : current.productForm,
+        progress: current.progress,
+        repoUrl: current.repoUrl,
+        liveUrl: current.liveUrl,
+      };
+      const result = await pushProjectToGitHubLibrary(payload, sourceIdea);
+      setLibraryResult(result);
+      toast.push({ message: '项目需求已写入 GitHub 念头库，并生成了三种平台的启动指令。', tone: 'success' });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : '写入 GitHub 失败，请检查连接与仓库权限。';
+      setLibraryError(message);
+      toast.push({ message, tone: 'error' });
+    } finally {
+      setPushingToLibrary(false);
+    }
+  };
+
+  const handleCopyPlatformPrompt = async () => {
+    if (!libraryResult) return;
+    const ok = await copyText(libraryResult.prompts[promptPlatform]);
+    toast.push(ok
+      ? { message: `${promptPlatform} 启动指令已复制。打开对应平台粘贴即可。`, tone: 'success' }
+      : { message: '复制没有成功，请选中下方指令手动复制。', tone: 'error' });
+  };
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((previous) => ({ ...(previous ?? stored), [key]: value }));
@@ -301,11 +357,51 @@ export function ProjectDetailPage({
         </div>
 
         <div className="nb-actionbar">
+          <Button
+            variant="secondary"
+            icon="external"
+            disabled={pushingToLibrary}
+            onClick={() => void handleSaveToGitHubLibrary()}
+          >
+            {pushingToLibrary ? '正在存入 GitHub…' : '存入 GitHub 念头库'}
+          </Button>
           <Button variant="ghost" icon="trash" onClick={() => setPendingDelete(true)}>
             删除项目
           </Button>
         </div>
       </form>
+
+      {libraryError ? <p className="nb-notice nb-notice--danger" role="alert">{libraryError}</p> : null}
+
+      {libraryResult ? (
+        <section className="nb-section" aria-labelledby="nb-project-github-result">
+          <div className="nb-section__head">
+            <h2 className="nb-section__title" id="nb-project-github-result">已存入 GitHub 念头库</h2>
+          </div>
+          <div className="nb-card nb-card--pad nb-stack">
+            <p className="nb-kv">归档位置：<a className="nb-link" href={libraryResult.fileUrl} target="_blank" rel="noreferrer noopener">{libraryResult.path}</a></p>
+            <p className="nb-kv">以下指令会告诉对应 AI 平台读取此项目说明，再继续开发。私有仓库仍需在对应平台配置 GitHub 读取权限。</p>
+            <div className="nb-work-filters" role="group" aria-label="选择 AI 平台启动指令">
+              {(['ChatGPT', 'Codex', 'WorkBuddy'] as GitHubPlatform[]).map((platform) => (
+                <button
+                  key={platform}
+                  type="button"
+                  className={promptPlatform === platform ? 'nb-chip nb-chip--active' : 'nb-chip'}
+                  aria-pressed={promptPlatform === platform}
+                  onClick={() => setPromptPlatform(platform)}
+                >
+                  {platform}
+                </button>
+              ))}
+            </div>
+            <pre className="nb-github-library__prompt">{libraryResult.prompts[promptPlatform]}</pre>
+            <div className="nb-actionbar">
+              <Button variant="primary" icon="upload" onClick={() => void handleCopyPlatformPrompt()}>复制 {promptPlatform} 启动指令</Button>
+              <a className="nb-link" href={libraryResult.fileUrl} target="_blank" rel="noreferrer noopener">查看 GitHub 文件 <Icon name="external" size={14} /></a>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <ConfirmDialog
         open={pendingDelete}

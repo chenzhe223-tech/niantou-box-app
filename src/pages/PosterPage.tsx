@@ -47,6 +47,8 @@ import {
   type PosterImageResult,
   type PosterStyleId,
 } from '../services/poster';
+import { toNianBoxError } from '../services/storage';
+import { saveWork } from '../services/works';
 import { displayTitle, type Idea } from '../types/idea';
 
 /** 从服务端的 422 响应里取出隐私检查明细。 */
@@ -101,6 +103,37 @@ export function PosterPage({
   /** 生图的前提：这个构建配了云端地址，并且已经登录。两者缺一都如实说明。 */
   const usable = sync.configured && sync.signedIn;
 
+  /** 每次成功出图后自动写入本机作品库，失败不会让已生成的图片消失。 */
+  const saveGeneratedWork = useCallback(
+    async (
+      target: Idea,
+      dataUrl: string,
+      render: PosterImageResult['render'],
+      nextStyle: PosterStyleId,
+      nextAspect: PosterAspect,
+    ) => {
+      try {
+        await saveWork({
+          ideaId: target.id,
+          source: 'poster',
+          render,
+          style: nextStyle,
+          aspect: nextAspect,
+          title: displayTitle(target),
+          dataUrl,
+        });
+        toast.push({ message: '图片已自动归集到「最近作品」，并按关联念头分类。', tone: 'success' });
+      } catch (caught) {
+        toast.push({
+          message: `图片已生成，但自动归集失败：${toNianBoxError(caught).message}。可以先保存图片，稍后重试。`,
+          tone: 'error',
+          duration: 0,
+        });
+      }
+    },
+    [toast],
+  );
+
   const idea: Idea | null = useMemo(
     () => (selectedId ? activeIdeas.find((item) => item.id === selectedId) ?? null : null),
     [activeIdeas, selectedId],
@@ -153,7 +186,9 @@ export function PosterPage({
           // 图像模型给的图不一定干净（免费档会在右下角打水印），
           // 统一裁掉底部一小条并补上品牌页脚 —— 六种风格的海报收尾一致。
           const branded = await applyBrandFooter(generated.dataUrl, nextAspect);
-          setPoster(branded ? { ...generated, dataUrl: branded } : generated);
+          const finalPoster = branded ? { ...generated, dataUrl: branded } : generated;
+          setPoster(finalPoster);
+          await saveGeneratedWork(target, finalPoster.dataUrl, finalPoster.render, nextStyle, nextAspect);
           setPhase('ready');
           track('poster_used', {
             source: entrySource,
@@ -171,13 +206,15 @@ export function PosterPage({
           aspect: nextAspect,
           abstraction: abstraction.abstraction,
         });
-        setPoster({
+        const localPoster: PosterImageResult = {
           render: 'local',
           dataUrl: local.dataUrl,
           provider: '',
           promptPreview: '',
           privacy: abstraction.privacy,
-        });
+        };
+        setPoster(localPoster);
+        await saveGeneratedWork(target, localPoster.dataUrl, localPoster.render, nextStyle, nextAspect);
         setPhase('ready');
         track('poster_used', {
           source: entrySource,
@@ -212,7 +249,7 @@ export function PosterPage({
         });
       }
     },
-    [entrySource],
+    [entrySource, saveGeneratedWork],
   );
 
   /**

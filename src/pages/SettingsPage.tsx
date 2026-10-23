@@ -41,6 +41,7 @@ import {
 import { downloadBackup, humanFileSize, pickJsonFile } from '../services/fileTransfer';
 import { clearAllData, toNianBoxError } from '../services/storage';
 import { listWorks } from '../services/works';
+import { GitHubLibrarySettingsPanel } from '../components/GitHubLibrarySettingsPanel';
 
 const STRATEGY_OPTIONS: ReadonlyArray<{ value: DuplicateStrategy; label: string }> = [
   { value: 'skip', label: '保留现有数据，跳过相同 ID（推荐）' },
@@ -348,6 +349,8 @@ export function SettingsPage({ navigate }: { navigate: (hash: string) => void })
           </p>
         </div>
       </section>
+
+      <GitHubLibrarySettingsPanel />
 
       <section className="nb-section" aria-labelledby="nb-settings-storage">
         <div className="nb-section__head">
