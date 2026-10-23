@@ -102,8 +102,9 @@ export function NianVaultPanel() {
       setNotice(result.archiveStatus === 'archived' ? '归档已完成。' : '已处理重试请求，请刷新查看真实状态。');
       await refresh();
     } catch (caught) {
-      setError(describeCloudError(caught));
+      const message = describeCloudError(caught);
       await refresh();
+      setError(message);
     } finally {
       setBusy(false);
     }
