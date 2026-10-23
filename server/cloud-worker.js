@@ -177,6 +177,20 @@ export default {
         return await handleCapture(request, env);
       }
 
+      // NianVault archive MVP. These routes never backfill historical ideas.
+      if (request.method === 'GET' && path === '/vault/status') {
+        return await handleVaultStatus(request, env);
+      }
+      if (request.method === 'POST' && path === '/vault/enable') {
+        return await handleVaultEnable(request, env);
+      }
+      if (request.method === 'POST' && path === '/vault/archive') {
+        return await handleVaultArchive(request, env);
+      }
+      if (request.method === 'POST' && path === '/vault/retry') {
+        return await handleVaultRetry(request, env);
+      }
+
       if (request.method === 'POST' && path === '/ai/analyze') {
         return await handleAnalyzeIdea(request, env);
       }
@@ -2718,3 +2732,249 @@ async function handleMail(request, env) {
   await logService(env, user.id, 'mail', true, 'sent');
   return json({ configured: true, sent: true, id: result.id });
 }
+
+
+/* -------------------------------------------------------------------------- */
+/* NianVault: private GitHub archival (new ideas only; explicit opt-in)         */
+/* -------------------------------------------------------------------------- */
+
+function vaultRepository(env) {
+  const raw = String(env.NIANVAULT_REPO || '').trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) return '';
+  return raw;
+}
+
+function vaultPathForIdea(idea) {
+  const category = ({ life: 'life', app: 'app', skill: 'skill', web: 'web', other: 'other' })[idea.category] || 'other';
+  const id = String(idea.id || '');
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new HttpError(422, '念头编号不符合归档规范。', 'VAULT_BAD_ID');
+  return `thoughts/${category}/${id}.json`;
+}
+
+function canonicalVaultThought(idea, user, operationId, version) {
+  return {
+    schema_version: 1,
+    id: String(idea.id),
+    title: String(idea.title || ''),
+    content: String(idea.content || ''),
+    category: idea.category ?? null,
+    category_source: idea.categorySource ?? null,
+    status: String(idea.status || 'inbox'),
+    tags: Array.isArray(idea.tags) ? idea.tags.filter((x) => typeof x === 'string').slice(0, 100) : [],
+    pinned: Boolean(idea.pinned),
+    notes: String(idea.notes || ''),
+    problem: String(idea.problem || ''),
+    target_users: String(idea.targetUsers || ''),
+    product_form: idea.productForm ?? null,
+    project_url: String(idea.projectUrl || ''),
+    project_id: idea.projectId ?? null,
+    created_at: num(idea.createdAt),
+    updated_at: num(idea.updatedAt),
+    deleted_at: idea.deletedAt == null ? null : num(idea.deletedAt),
+    source: { app: 'nianbox', record_id: String(idea.id) },
+    version,
+    operation_id: operationId,
+    owner_id: String(user.id),
+  };
+}
+
+async function handleVaultStatus(request, env) {
+  const user = await authenticate(request, env);
+  const settings = await env.DB.prepare(
+    'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq, repository FROM vault_settings WHERE user_id = ?',
+  ).bind(user.id).first();
+  const counts = await env.DB.prepare(
+    "SELECT status, COUNT(*) AS count FROM vault_archive_jobs WHERE user_id = ? GROUP BY status",
+  ).bind(user.id).all();
+  const byStatus = {};
+  for (const row of counts.results || []) byStatus[row.status] = num(row.count);
+  return json({
+    enabled: Boolean(settings),
+    enabledAt: settings ? num(settings.enabledAt) : null,
+    activationSeq: settings ? num(settings.activationSeq) : null,
+    repositoryConfigured: Boolean(vaultRepository(env)),
+    githubCredentialConfigured: Boolean(String(env.NIANVAULT_GITHUB_TOKEN || '').trim()),
+    repository: settings?.repository || vaultRepository(env) || null,
+    jobs: byStatus,
+  });
+}
+
+async function handleVaultEnable(request, env) {
+  const user = await authenticate(request, env);
+  const body = await readJson(request);
+  if (body.confirm_no_backfill !== true) {
+    throw new HttpError(400, '必须明确确认不迁移历史念头。', 'VAULT_NO_BACKFILL_CONFIRMATION_REQUIRED');
+  }
+  const repo = vaultRepository(env);
+  if (!repo || !String(env.NIANVAULT_GITHUB_TOKEN || '').trim()) {
+    throw new HttpError(503, 'NianVault 尚未配置私有仓库与服务端凭证。', 'VAULT_NOT_CONFIGURED');
+  }
+  const existing = await env.DB.prepare('SELECT user_id FROM vault_settings WHERE user_id = ?').bind(user.id).first();
+  if (existing) {
+    return json({ ok: true, enabled: true, alreadyEnabled: true, message: 'NianVault 已启用；历史数据不会补归档。' });
+  }
+  const at = nowMs();
+  const state = await env.DB.prepare('SELECT last_seq AS lastSeq FROM user_state WHERE user_id = ?').bind(user.id).first();
+  const ideaSeq = await env.DB.prepare('SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM ideas WHERE user_id = ?').bind(user.id).first();
+  const projectSeq = await env.DB.prepare('SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM projects WHERE user_id = ?').bind(user.id).first();
+  const activationSeq = Math.max(num(state?.lastSeq), num(ideaSeq?.maxSeq), num(projectSeq?.maxSeq));
+  await env.DB.prepare(
+    'INSERT INTO vault_settings (user_id, enabled_at, activation_seq, repository, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind(user.id, at, activationSeq, repo, at, at).run();
+  await env.DB.prepare(
+    'INSERT INTO vault_audit_events (id, user_id, operation_id, action, result, created_at, detail_code) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).bind(crypto.randomUUID(), user.id, 'enable:' + at, 'enable', 'success', at, 'no-backfill');
+  return json({ ok: true, enabled: true, enabledAt: at, activationSeq, repository: repo, message: 'NianVault 已启用；只处理启用后新增的念头，不会迁移历史记录。' }, 201);
+}
+
+async function handleVaultArchive(request, env) {
+  const user = await authenticate(request, env);
+  const body = await readJson(request);
+  const id = str(body.id, 120).trim();
+  if (!id) throw new HttpError(400, '缺少念头编号。', 'VAULT_MISSING_ID');
+  const settings = await env.DB.prepare(
+    'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq, repository FROM vault_settings WHERE user_id = ?',
+  ).bind(user.id).first();
+  if (!settings) throw new HttpError(409, '请先启用 NianVault。', 'VAULT_NOT_ENABLED');
+  const row = await env.DB.prepare(
+    'SELECT id, doc, updated_at AS updatedAt, deleted_at AS deletedAt, seq FROM ideas WHERE user_id = ? AND id = ?',
+  ).bind(user.id, id).first();
+  if (!row) throw new HttpError(404, '找不到这条念头。', 'VAULT_IDEA_NOT_FOUND');
+  const idea = parseDoc(row) || {};
+  // Strictly exclude historical records. Only ideas created after activation are eligible.
+  if (num(idea.createdAt) < num(settings.enabledAt) || num(row.seq) <= num(settings.activationSeq)) {
+    throw new HttpError(409, '这条念头属于启用前的历史数据，不会迁移到 NianVault。', 'VAULT_HISTORICAL_RECORD_BLOCKED');
+  }
+  if (idea.deletedAt != null || row.deletedAt != null) {
+    throw new HttpError(409, '已删除的念头不能通过新增归档入口重新归档。', 'VAULT_DELETED_RECORD');
+  }
+  const operationId = 'new-idea:' + id;
+  const version = Math.max(1, num(idea.updatedAt, num(row.updatedAt)));
+  const payload = canonicalVaultThought(idea, user, operationId, version);
+  const payloadJson = JSON.stringify(payload, null, 2) + '\n';
+  const payloadHash = await sha256Hex(payloadJson);
+  const path = vaultPathForIdea(idea);
+  const at = nowMs();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO vault_archive_jobs
+      (user_id, operation_id, entity, entity_id, entity_version, operation, payload_json, payload_sha256, status, attempts, next_attempt_at, created_at, updated_at)
+     VALUES (?, ?, 'idea', ?, ?, 'upsert', ?, ?, 'pending', 0, ?, ?, ?)`,
+  ).bind(user.id, operationId, id, version, payloadJson, payloadHash, at, at, at).run();
+  const job = await env.DB.prepare(
+    'SELECT status, github_commit_sha AS commitSha, github_path AS githubPath, last_error_code AS errorCode FROM vault_archive_jobs WHERE user_id = ? AND operation_id = ?',
+  ).bind(user.id, operationId).first();
+  if (job?.status === 'archived') {
+    return json({ ok: true, thoughtId: id, archiveStatus: 'archived', commitSha: job.commitSha, path: job.githubPath, duplicate: true });
+  }
+  return await processVaultArchiveJob(env, user, operationId);
+}
+
+async function processVaultArchiveJob(env, user, operationId) {
+  const repo = vaultRepository(env);
+  const token = String(env.NIANVAULT_GITHUB_TOKEN || '').trim();
+  if (!repo || !token) throw new HttpError(503, 'NianVault 尚未配置私有仓库与服务端凭证。', 'VAULT_NOT_CONFIGURED');
+  const job = await env.DB.prepare(
+    'SELECT * FROM vault_archive_jobs WHERE user_id = ? AND operation_id = ?',
+  ).bind(user.id, operationId).first();
+  if (!job) throw new HttpError(404, '归档任务不存在。', 'VAULT_JOB_NOT_FOUND');
+  if (job.status === 'archived') {
+    return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha: job.github_commit_sha, path: job.github_path, duplicate: true });
+  }
+  const path = vaultPathForIdea(JSON.parse(job.payload_json));
+  const apiBase = 'https://api.github.com/repos/' + repo + '/contents/' + path.split('/').map(encodeURIComponent).join('/');
+  const headers = {
+    authorization: 'Bearer ' + token,
+    accept: 'application/vnd.github+json',
+    'x-github-api-version': '2022-11-28',
+    'user-agent': 'NianVault-Archive-Service',
+    'content-type': 'application/json',
+  };
+  const bodyText = String(job.payload_json).trim();
+  const encoded = bytesToBase64(new TextEncoder().encode(bodyText + '\n'));
+  const at = nowMs();
+  await env.DB.prepare(
+    "UPDATE vault_archive_jobs SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE user_id = ? AND operation_id = ?",
+  ).bind(at, user.id, operationId).run();
+  try {
+    const getRes = await fetch(apiBase, { method: 'GET', headers });
+    let currentSha = '';
+    if (getRes.ok) {
+      const current = await getRes.json();
+      currentSha = String(current.sha || '');
+      if (current.content) {
+        try {
+          const decoded = new TextDecoder().decode(Uint8Array.from(atob(String(current.content).replace(/\s/g, '')), c => c.charCodeAt(0))).trim();
+          if (decoded === bodyText) {
+            await markVaultArchived(env, user.id, job, path, currentSha, String(current.commit?.sha || ''), at);
+            return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha: String(current.commit?.sha || ''), path, duplicate: true });
+          }
+        } catch { /* A malformed response is handled as a normal conditional update below. */ }
+      }
+    } else if (getRes.status !== 404) {
+      throw new Error('github_read_' + getRes.status);
+    }
+    const putBody = {
+      message: 'Archive new NianBox thought ' + String(job.entity_id),
+      content: encoded,
+      ...(currentSha ? { sha: currentSha } : {}),
+    };
+    const putRes = await fetch(apiBase, { method: 'PUT', headers, body: JSON.stringify(putBody) });
+    const putText = await putRes.text();
+    let result = {};
+    try { result = JSON.parse(putText); } catch {}
+    if (!putRes.ok) {
+      const code = putRes.status === 409 || putRes.status === 422 ? 'github_conflict' : 'github_write_' + putRes.status;
+      await env.DB.prepare(
+        "UPDATE vault_archive_jobs SET status = ?, last_error_code = ?, next_attempt_at = ?, updated_at = ? WHERE user_id = ? AND operation_id = ?",
+      ).bind((putRes.status === 409 || putRes.status === 422) ? 'conflict' : 'retrying', code, at + 60000, at, user.id, operationId).run();
+      throw new HttpError(putRes.status === 409 || putRes.status === 422 ? 409 : 503, 'NianVault 归档未完成，请稍后重试。', code);
+    }
+    const commitSha = String(result.commit?.sha || '');
+    const blobSha = String(result.content?.sha || '');
+    if (!commitSha || !blobSha) throw new Error('github_response_missing_commit');
+    await markVaultArchived(env, user.id, job, path, blobSha, commitSha, at);
+    return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha, path, duplicate: false });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    const retryAt = at + 60000;
+    await env.DB.prepare(
+      "UPDATE vault_archive_jobs SET status = 'retrying', last_error_code = ?, next_attempt_at = ?, updated_at = ? WHERE user_id = ? AND operation_id = ?",
+    ).bind(String(error?.message || 'github_error').slice(0, 80), retryAt, nowMs(), user.id, operationId).run();
+    throw new HttpError(503, 'NianVault 暂时无法归档；任务已保留，可稍后重试。', 'VAULT_ARCHIVE_RETRYING');
+  }
+}
+
+async function markVaultArchived(env, userId, job, path, blobSha, commitSha, at) {
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE vault_archive_jobs SET status = 'archived', github_path = ?, github_commit_sha = ?, archived_at = ?, updated_at = ?, last_error_code = NULL WHERE user_id = ? AND operation_id = ?",
+    ).bind(path, commitSha, at, at, userId, job.operation_id),
+    env.DB.prepare(
+      `INSERT INTO vault_entity_heads (user_id, entity, entity_id, version, payload_sha256, github_path, github_blob_sha, github_commit_sha, deleted_at, updated_at)
+       VALUES (?, 'idea', ?, ?, ?, ?, ?, ?, NULL, ?)
+       ON CONFLICT(user_id, entity, entity_id) DO UPDATE SET
+         version = excluded.version, payload_sha256 = excluded.payload_sha256, github_path = excluded.github_path,
+         github_blob_sha = excluded.github_blob_sha, github_commit_sha = excluded.github_commit_sha, updated_at = excluded.updated_at`,
+    ).bind(userId, job.entity_id, num(job.entity_version), String(job.payload_sha256), path, blobSha, commitSha, at),
+    env.DB.prepare(
+      'INSERT INTO vault_audit_events (id, user_id, operation_id, action, result, created_at, detail_code) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), userId, job.operation_id, 'archive', 'success', at, 'github-commit-verified'),
+  ]);
+}
+
+async function handleVaultRetry(request, env) {
+  const user = await authenticate(request, env);
+  const body = await readJson(request);
+  const operationId = str(body.operation_id, 180).trim();
+  if (!operationId) throw new HttpError(400, '缺少归档任务编号。', 'VAULT_MISSING_OPERATION_ID');
+  const job = await env.DB.prepare(
+    'SELECT status, next_attempt_at AS nextAttemptAt FROM vault_archive_jobs WHERE user_id = ? AND operation_id = ?',
+  ).bind(user.id, operationId).first();
+  if (!job) throw new HttpError(404, '归档任务不存在。', 'VAULT_JOB_NOT_FOUND');
+  if (job.status === 'archived') return json({ ok: true, archiveStatus: 'archived', duplicate: true });
+  if (num(job.nextAttemptAt) > nowMs() && job.status === 'retrying') {
+    throw new HttpError(429, '归档正在退避重试，请稍后再试。', 'VAULT_RETRY_BACKOFF');
+  }
+  return await processVaultArchiveJob(env, user, operationId);
+}
+
