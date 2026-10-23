@@ -2392,10 +2392,10 @@ html[data-nb-keyboard='open'] .nb-tabbar {
   flex: 0 0 clamp(176px, 24vw, 224px);
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--nb-border, #e6e0d8);
+  border: 1px solid var(--nb-line);
   border-radius: 18px;
-  background: var(--nb-surface, #fffdfa);
-  box-shadow: 0 5px 22px rgb(48 38 26 / 5%);
+  background: var(--nb-surface);
+  box-shadow: 0 5px 22px rgba(var(--rgb-ink), 0.05);
   scroll-snap-align: start;
 }
 .nb-gallery--reel .nb-gallery__thumb {
@@ -2404,7 +2404,7 @@ html[data-nb-keyboard='open'] .nb-tabbar {
   aspect-ratio: 4 / 5;
   border: 0;
   border-radius: 0;
-  background: linear-gradient(145deg, #f2eee8, #e8e2f6);
+  background: linear-gradient(145deg, var(--nb-bg-tint), var(--nb-accent-soft));
 }
 .nb-gallery--reel .nb-gallery__thumb:hover {
   transform: none;
@@ -2423,11 +2423,11 @@ html[data-nb-keyboard='open'] .nb-tabbar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border: 1px solid rgb(255 255 255 / 58%);
+  border: 1px solid rgba(var(--rgb-surface), 0.58);
   border-radius: 999px;
   padding: 5px 9px;
   color: #292632;
-  background: rgb(255 253 250 / 88%);
+  background: rgba(var(--rgb-surface), 0.88);
   backdrop-filter: blur(12px);
   font-size: 11px;
   font-weight: 650;
@@ -2445,10 +2445,10 @@ html[data-nb-keyboard='open'] .nb-tabbar {
 }
 .nb-work-empty {
   padding: 28px 18px;
-  border: 1px dashed var(--nb-border, #ded7cd);
+  border: 1px dashed var(--nb-line-strong);
   border-radius: 16px;
   text-align: center;
-  color: var(--nb-text-muted, #77716b);
+  color: var(--nb-ink-muted);
   background: rgb(255 253 250 / 58%);
 }
 .nb-github-library__prompt {
@@ -2456,11 +2456,11 @@ html[data-nb-keyboard='open'] .nb-tabbar {
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  border: 1px solid var(--nb-border, #e6e0d8);
+  border: 1px solid var(--nb-line);
   border-radius: 12px;
   padding: 14px;
-  color: var(--nb-text, #292622);
-  background: var(--nb-surface-muted, #f8f5f0);
+  color: var(--nb-ink);
+  background: var(--nb-surface-soft);
   font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (max-width: 480px) {
