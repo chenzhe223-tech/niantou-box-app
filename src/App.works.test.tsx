@@ -157,9 +157,9 @@ describe('作品库：保存、重新读取与删除', () => {
     const idea = await createIdea({ content: '这张卡片要留下来' });
 
     const first = renderApp(`#/poster/${idea.id}`);
-    await first.user.click(await screen.findByRole('button', { name: '保存到我的作品' }));
 
-    expect(await screen.findByText('已经存进「我的作品」，以后随时能找回来。')).toBeInTheDocument();
+    // 卡片成功绘制后应自动写入作品库，不再要求用户额外点击保存。
+    expect(await screen.findByText('卡片已自动归集到「最近作品」。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '已保存到我的作品' })).toBeDisabled();
 
     const works = await listWorks();
@@ -328,8 +328,7 @@ describe('分享：只在用户确认之后发生', () => {
     const { user } = renderApp(`#/poster/${idea.id}`);
 
     await screen.findByText('现在能做的是「本机制作的念头卡片」');
-    await user.click(await screen.findByRole('button', { name: '保存到我的作品' }));
-    expect(await screen.findByText('已经存进「我的作品」，以后随时能找回来。')).toBeInTheDocument();
+    expect(await screen.findByText('卡片已自动归集到「最近作品」。')).toBeInTheDocument();
 
     // 保存到本机作品不是分享：系统分享与网络请求都还没发生。
     expect(shareSpy).not.toHaveBeenCalled();
@@ -383,7 +382,7 @@ describe('作品图片：按需读取，不把全部图片塞进内存', () => {
     }
   }
 
-  it('首页有 6 件作品时，只把最近 4 件的图片读进内存', async () => {
+  it('首页有 6 件作品时，按专辑架需要只把最近作品图片读入内存', async () => {
     const idea = await createIdea({ content: '作品很多时的首页' });
     await seedWorks(idea.id, 6);
 
@@ -395,17 +394,19 @@ describe('作品图片：按需读取，不把全部图片塞进内存', () => {
       expect(await screen.findByRole('button', { name: '查看全部（6）' })).toBeInTheDocument();
 
       await waitFor(() => {
-        // 只读了最近 4 件（work_seed_5 → work_seed_2），最旧的两件没进内存。
+        // 首页横向专辑架读取最近最多 8 件；这里 6 件全部可见。
         expect([...new Set(tracker.ids)].sort()).toEqual([
+          'work_seed_0',
+          'work_seed_1',
           'work_seed_2',
           'work_seed_3',
           'work_seed_4',
           'work_seed_5',
         ]);
       });
-      // 首页版面最多展示最近 3 件。
+      // 横向专辑架展示最近最多 8 件，6 件作品都在可浏览范围。
       expect(screen.getByText('作品 5')).toBeInTheDocument();
-      expect(screen.queryByText('作品 2')).toBeNull();
+      expect(screen.getByText('作品 2')).toBeInTheDocument();
     } finally {
       tracker.restore();
     }
