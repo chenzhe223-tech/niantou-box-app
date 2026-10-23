@@ -1,46 +1,48 @@
-# NianVault API contract (proposed)
+# NianVault API contract
 
-Status: design contract; endpoints are not considered live until implemented and verified against the deployed Worker.
+Status: routes are implemented in the NianBox cloud Worker on this branch. They are not live until the PR is merged and the Cloudflare Worker is deployed with a private repository and secret.
 
-Base path: `/vault`. These routes are added in the NianBox cloud Worker; standalone repository/app setup remains a separate release gate. Authentication must reuse the authenticated NianBox account/session. Every operation scopes all database reads and writes to the authenticated server-derived `user_id`; never trust a client-provided owner ID.
+Base path: `/vault`. Authentication reuses the existing NianBox bearer session. Every read/write is scoped to the server-derived `user_id`; clients must never choose the owner ID.
 
 ## Endpoints
 
-- `GET /vault/status` — enablement and archive job status. — service health, no private data.
-- `GET /vault/thoughts?before_seq=&limit=&category=&status=&q=` — paginated owner-only list.
-- `GET /vault/thoughts/:id` — retrieve one eligible thought.
-- `POST /vault/thoughts` — create/queue archive; requires a stable `id` or `Idempotency-Key`.
+- `GET /vault/status` — enablement, repository configuration, and queue counts.
+- `POST /vault/enable` — explicitly enable archive; request must include `confirm_no_backfill: true`; verifies the configured repository is private.
+- `GET /vault/thoughts?before_seq=&limit=&category=&status=&q=` — paginated owner-only listing of in-scope thoughts.
+- `GET /vault/thoughts/:id` — read an eligible thought and its archive status.
+- `POST /vault/thoughts` — create a thought; requires a stable `id` or `Idempotency-Key`.
 - `PATCH /vault/thoughts/:id` — update with `expected_version` in the request body.
-- `DELETE /vault/thoughts/:id` — soft-delete tombstone; do not remove Git history.
-- `POST /vault/thoughts/:id/restore` — restore if the expected version matches.
-- `GET /vault/status` — queue counts and last verified archive time.
-- `POST /vault/retry` — retry eligible failed jobs for the current user only.
-- `POST /vault/enable` — explicitly enable the archive without historical backfill.\n- `POST /vault/archive` — archive an eligible existing new thought by ID.\n- `POST /vault/retry` — retry a job by operation ID.
+- `DELETE /vault/thoughts/:id` — soft-delete and archive a tombstone; Git history is retained.
+- `POST /vault/thoughts/:id/restore` — restore if `expected_version` matches.
+- `POST /vault/archive` — archive an eligible existing post-activation thought by ID.
+- `POST /vault/retry` — retry a job by `operation_id`.
+- `GET /health` — existing service health endpoint.
 
-## Response rules
+## No-backfill boundary
 
-- `201` new record accepted; `200` read/update; `202` queued but not yet archived.
-- `401` missing/expired session; `403` revoked client or insufficient scope.
-- `409` stale version or conflicting update, with current version and a safe conflict code.
-- `422` invalid schema; `429` rate limit; `503` GitHub service unavailable while durable work remains queued.
-- A response may say `archive_status: archived` only after a GitHub commit is confirmed and the canonical file is verified.
-- Never log or echo the full request body.
+Only thoughts created after the explicit enablement time and activation sequence are in scope. Existing historical thoughts remain out of scope even if edited later. Edits and soft-deletes of an eligible post-activation thought are versioned and synchronized.
+
+## Response and error rules
+
+- `201` created; `200` read/update; `409` stale version, duplicate ID with different content, or historical record outside scope.
+- `401` missing/expired session; `413` request/body limit; `422` invalid input; `429` retry/rate limiting; `503` archive service unavailable while durable work is retained.
+- A response may say `archiveStatus: archived` only after the GitHub commit is confirmed.
+- `pending`, `retrying`, `conflict`, and `failed` are not successful archive states.
 
 ## Version and idempotency
 
-Each record has a stable ID and monotonic integer version. Each mutation has a stable `operation_id`. Replaying the same operation ID returns the existing result. A write with a stale expected version returns 409; clients must reconcile rather than overwrite silently.
+The D1 server sequence is used as the record version. A stale `expected_version` returns 409; clients must re-read and reconcile. Create requests require a stable record ID or `Idempotency-Key`. Archive job IDs include the record ID and version, so edits produce new jobs and retries of the same version are idempotent.
 
 ## GitHub write protocol
 
-1. Validate owner session, schema, limits, and operation id.
-2. Persist the queue job in D1 before acknowledging acceptance.
-3. Read the current canonical path and blob SHA.
-4. Compare the expected version / payload hash against the latest head.
-5. Create a commit using Git Data API or Contents API with current SHA.
-6. Verify the returned commit and file content hash.
-7. Mark job archived and update the entity head in D1.
-8. On timeout after a possible commit, read back the target path and compare the payload hash before retrying.
+1. Authenticate and validate the request and record scope.
+2. Persist the archive job in D1.
+3. Read the canonical path and current GitHub blob SHA.
+4. If the stored version is newer, mark conflict and never overwrite it.
+5. Create/update the file using the current SHA.
+6. Verify the returned commit and file SHA, then mark the job archived.
+7. On transient failure, retain the job with bounded exponential backoff; scheduled processing retries due jobs.
 
 ## Security
 
-GitHub credential exists only as a Worker secret. Do not place it in browser bundles, public app config, telemetry, or logs. Enforce JSON content type, request size limits, allowed CORS origins, rate limits, and authorization on every route. Private GitHub storage is not end-to-end encryption.
+GitHub credentials exist only as Worker secrets. Never place them in browser bundles, public app config, telemetry, or logs. The Worker validates repository privacy at enablement. A private repository is not end-to-end encryption; Worker and GitHub can process plaintext.
