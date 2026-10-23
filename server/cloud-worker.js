@@ -284,7 +284,7 @@ function corsHeaders() {
     // 官网与应用处在不同源，二者都要能直接调这套 API；
     // 鉴权走 Authorization 头而不是 Cookie，因此开启通配来源不会带来 CSRF 风险。
     'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '86400',
     'cache-control': 'no-store',
@@ -3037,9 +3037,9 @@ async function handleVaultRetry(request, env) {
   ).bind(user.id, operationId).first();
   if (!job) throw new HttpError(404, '归档任务不存在。', 'VAULT_JOB_NOT_FOUND');
   if (job.status === 'archived') return json({ ok: true, archiveStatus: 'archived', duplicate: true });
-  if (num(job.nextAttemptAt) > nowMs() && job.status === 'retrying') {
-    throw new HttpError(429, '归档正在退避重试，请稍后再试。', 'VAULT_RETRY_BACKOFF');
-  }
+  await env.DB.prepare(
+    "UPDATE vault_archive_jobs SET status = 'pending', attempts = CASE WHEN status = 'failed' THEN 0 ELSE attempts END, next_attempt_at = ?, updated_at = ? WHERE user_id = ? AND operation_id = ?",
+  ).bind(nowMs(), nowMs(), user.id, operationId).run();
   return await processVaultArchiveJob(env, user, operationId);
 }
 
@@ -3166,10 +3166,18 @@ async function handleVaultCreate(request, env) {
   if (typeof body.content !== 'string' || !body.content.trim()) throw new HttpError(400, '念头正文不能为空。', 'EMPTY_CONTENT');
   if (body.content.length > MAX_TEXT_CHARS) throw new HttpError(413, '念头正文超过当前应用限制。', 'VAULT_CONTENT_TOO_LARGE');
   const at = nowMs();
-  const id = str(body.id, 120).trim() || 'idea_' + crypto.randomUUID();
+  const requestedId = str(body.id, 120).trim() || str(request.headers.get('idempotency-key'), 120).trim();
+  if (!requestedId) throw new HttpError(400, '请提供稳定的念头 ID 或 Idempotency-Key，避免弱网重试产生重复记录。', 'VAULT_IDEMPOTENCY_KEY_REQUIRED');
+  const id = requestedId;
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new HttpError(422, '念头编号不符合规范。', 'VAULT_BAD_ID');
   const existing = await selectRecord(env, 'ideas', user.id, id);
-  if (existing) throw new HttpError(409, '这个念头编号已经存在。', 'VAULT_DUPLICATE_ID');
+  if (existing) {
+    const prior = parseDoc(existing) || {};
+    if (prior.content === body.content && prior.title === str(body.title, MAX_TITLE_CHARS)) {
+      return json({ ok: true, duplicate: true, idea: { ...prior, version: num(existing.seq) }, archiveStatus: 'existing' });
+    }
+    throw new HttpError(409, '这个念头编号已被其他内容使用。', 'VAULT_DUPLICATE_ID');
+  }
   const idea = normalizeIdea({ ...body, id, content: body.content, createdAt: at, updatedAt: at, deletedAt: null });
   const seq = await allocateSeq(env, 1);
   await env.DB.prepare(
