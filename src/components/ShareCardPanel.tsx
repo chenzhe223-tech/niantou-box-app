@@ -53,7 +53,7 @@ export function ShareCardPanel({
   const [card, setCard] = useState<LocalPosterResult | null>(null);
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** 这一次排版出来的图片有没有存进作品库；换文字 / 换比例后要重新保存。 */
+  /** 这一次排版出来的图片是否已自动归集进作品库。 */
   const [saved, setSaved] = useState(false);
 
   const title = displayTitle(idea);
@@ -68,13 +68,29 @@ export function ShareCardPanel({
     try {
       const result = await renderLocalShareCard({ title, content: body, mode, aspect });
       setCard(result);
+      // 卡片绘制成功后立即自动归集；即使落库失败，也保留当前图片供下载与分享。
+      try {
+        await saveWork({
+          ideaId: idea.id,
+          source: 'card',
+          render: 'local',
+          style: 'card',
+          aspect,
+          title,
+          dataUrl: result.dataUrl,
+        });
+        setSaved(true);
+        toast.push({ message: '卡片已自动归集到「最近作品」。', tone: 'success' });
+      } catch (caught) {
+        toast.push({ message: `卡片已经生成，但自动归集失败：${toNianBoxError(caught).message}`, tone: 'error' });
+      }
     } catch (caught) {
       setCard(null);
       setError(caught instanceof Error ? caught.message : '本机绘制失败，可以换一种比例再试。');
     } finally {
       setRendering(false);
     }
-  }, [aspect, body, mode, title]);
+  }, [aspect, body, idea.id, mode, title, toast]);
 
   // 只有用户真的展开时才画图：打开详情页时不为这一块白白跑一遍 Canvas。
   useEffect(() => {
@@ -247,7 +263,7 @@ export function ShareCardPanel({
 
             {saved ? (
               <p className="nb-kv">
-                图片已经存在这台设备上，不会自动上传，也不会自动公开。换文字或换比例之后需要重新保存一次。
+                图片已经存在这台设备上，不会自动上传，也不会自动公开。每次重新排版成功后都会自动归集到作品库。
                 可以在首页的「最近作品」或者作品列表里再找到它。
               </p>
             ) : null}
