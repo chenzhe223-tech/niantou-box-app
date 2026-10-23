@@ -15,6 +15,7 @@ import { Button } from '../components/Button';
 import { StatusBadge } from '../components/Badge';
 import { TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
+import { NianVaultPanel } from '../components/NianVaultPanel';
 import { useToast } from '../components/Toast';
 import { useCloudSync } from '../hooks/useCloudSync';
 import { track } from '../services/analytics';
@@ -388,6 +389,8 @@ export function CloudPage({ navigate }: { navigate: (hash: string) => void }) {
               </p>
             </div>
           </section>
+
+          <NianVaultPanel />
 
           <section className="nb-section" aria-labelledby="nb-cloud-devices">
             <div className="nb-section__head">
