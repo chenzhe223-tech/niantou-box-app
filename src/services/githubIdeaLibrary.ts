@@ -193,6 +193,8 @@ function utf8Base64(value: string): string {
   return btoa(binary);
 }
 
+const fence = String.fromCharCode(96).repeat(3);
+
 function fenced(value: string): string {
   return value.trim() || '（暂未填写）';
 }
