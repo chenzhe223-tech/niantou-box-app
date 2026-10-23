@@ -110,14 +110,15 @@ export function NianVaultPanel() {
   };
 
   const jobCount = (key: string) => status?.jobs?.[key] || 0;
-  const jobLabel = (value: string) => ({
+  const jobLabels: Record<string, string> = {
     pending: '待处理',
     processing: '处理中',
     retrying: '自动重试',
     archived: '已归档',
     conflict: '版本冲突',
     failed: '失败',
-  }[value] || value);
+  };
+  const jobLabel = (value: string) => jobLabels[value] || value;
 
   return (
     <section className="nb-section" aria-labelledby="nb-nianvault-title">
