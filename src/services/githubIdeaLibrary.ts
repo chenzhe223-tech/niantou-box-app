@@ -201,8 +201,11 @@ export function buildPlatformPrompts(
   repositoryUrl: string,
   path: string,
   projectName: string,
+  branch = 'main',
 ): Record<GitHubPlatform, string> {
-  const target = `${repositoryUrl}/blob/main/${path}`;
+  const branchPath = branch.split('/').map(encodeURIComponent).join('/');
+  const filePath = path.split('/').map(encodeURIComponent).join('/');
+  const target = `${repositoryUrl}/blob/${branchPath}/${filePath}`;
   const shared = `请先读取 GitHub 念头库中的项目说明文件：${target}\n\n以文件中记载的原始念头、问题、目标用户、功能范围和产品形态为准，不要臆造用户没有提供的需求。先检查当前代码与运行状态，再制定最小可验证实现；保留现有可用能力，完成后运行测试、构建和必要的线上验收。若你当前没有该 GitHub 仓库的读取权限，请明确提示我连接仓库或提供文件，不要假装已经读过。`;
   return {
     ChatGPT: `请协助我启动「${projectName}」项目。\n\n${shared}\n\n请先给出可执行的实施方案，再按任务推进；每个结论都要基于仓库实际内容与验证结果。`,
@@ -221,7 +224,7 @@ export async function pushProjectToGitHubLibrary(
   const token = getTokenOrThrow();
   const folder = `projects/${dateFolder(project.createdAt)}/${safeSlug(project.name)}-${project.id.slice(-6)}`;
   const path = `${folder}/README.md`;
-  const prompts = buildPlatformPrompts(settings.repositoryUrl, path, project.name);
+  const prompts = buildPlatformPrompts(settings.repositoryUrl, path, project.name, settings.branch);
 
   const markdown = [
     `# ${project.name || '未命名项目'}`,
