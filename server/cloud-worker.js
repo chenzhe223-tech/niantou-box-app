@@ -187,6 +187,28 @@ export default {
       if (request.method === 'POST' && path === '/vault/enable') {
         return await handleVaultEnable(request, env);
       }
+      if (request.method === 'GET' && path === '/vault/thoughts') {
+        return await handleVaultList(request, url, env);
+      }
+      if (request.method === 'POST' && path === '/vault/thoughts') {
+        return await handleVaultCreate(request, env);
+      }
+      if (path.startsWith('/vault/thoughts/')) {
+        const parts = path.split('/').filter(Boolean);
+        const id = decodeURIComponent(parts[2] || '');
+        if (parts.length === 4 && parts[3] === 'restore' && request.method === 'POST') {
+          return await handleVaultRestore(request, env, id);
+        }
+        if (parts.length === 3 && request.method === 'GET') {
+          return await handleVaultGet(request, env, id);
+        }
+        if (parts.length === 3 && request.method === 'PATCH') {
+          return await handleVaultUpdate(request, env, id);
+        }
+        if (parts.length === 3 && request.method === 'DELETE') {
+          return await handleVaultDelete(request, env, id);
+        }
+      }
       if (request.method === 'POST' && path === '/vault/archive') {
         return await handleVaultArchive(request, env);
       }
@@ -3069,3 +3091,144 @@ async function processDueVaultJobs(env) {
     "UPDATE vault_archive_jobs SET status = 'failed', last_error_code = COALESCE(last_error_code, 'retry_limit_exceeded'), updated_at = ? WHERE status IN ('pending', 'retrying', 'processing') AND attempts >= 12",
   ).bind(at).run();
 }
+
+
+async function getEnabledVaultSettings(env, userId) {
+  const settings = await env.DB.prepare(
+    'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq, repository FROM vault_settings WHERE user_id = ?',
+  ).bind(userId).first();
+  if (!settings) throw new HttpError(409, '请先启用 NianVault。', 'VAULT_NOT_ENABLED');
+  return settings;
+}
+
+function assertVaultRecordEligible(row, settings) {
+  const idea = parseDoc(row) || {};
+  if (!idea.id || num(idea.createdAt) < num(settings.enabledAt) || num(row.seq) <= num(settings.activationSeq)) {
+    throw new HttpError(404, '这条念头不属于 NianVault 的新增归档范围。', 'VAULT_RECORD_NOT_IN_SCOPE');
+  }
+  return idea;
+}
+
+async function handleVaultList(request, url, env) {
+  const user = await authenticate(request, env);
+  const settings = await getEnabledVaultSettings(env, user.id);
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
+  const beforeSeq = Math.max(0, Number(url.searchParams.get('before_seq')) || Number.MAX_SAFE_INTEGER);
+  const includeDeleted = url.searchParams.get('include_deleted') === 'true';
+  const rows = await env.DB.prepare(
+    `SELECT id, doc, updated_at AS updatedAt, deleted_at AS deletedAt, seq
+       FROM ideas
+      WHERE user_id = ? AND seq > ? AND seq < ? AND CAST(json_extract(doc, '$.createdAt') AS INTEGER) >= ?
+      ORDER BY seq DESC LIMIT ?`,
+  ).bind(user.id, num(settings.activationSeq), beforeSeq, num(settings.enabledAt), limit + 1).all();
+  const items = [];
+  for (const row of rows.results || []) {
+    const idea = parseDoc(row);
+    if (!idea || !idea.id) continue;
+    if (!includeDeleted && (idea.deletedAt != null || row.deletedAt != null)) continue;
+    const category = url.searchParams.get('category');
+    const status = url.searchParams.get('status');
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    if (category && category !== 'uncategorized' && idea.category !== category) continue;
+    if (category === 'uncategorized' && idea.category != null) continue;
+    if (status && idea.status !== status) continue;
+    if (q && ![idea.title, idea.content, idea.notes, ...(idea.tags || [])].join(' ').toLowerCase().includes(q)) continue;
+    items.push({ ...idea, version: num(row.seq), serverUpdatedAt: num(row.updatedAt) });
+  }
+  const hasMore = items.length > limit;
+  const page = items.slice(0, limit);
+  return json({
+    items: page,
+    nextBeforeSeq: hasMore && page.length ? page[page.length - 1].version : null,
+    enabledAt: num(settings.enabledAt),
+    totalReturned: page.length,
+  });
+}
+
+async function handleVaultGet(request, env, id) {
+  const user = await authenticate(request, env);
+  const settings = await getEnabledVaultSettings(env, user.id);
+  const row = await env.DB.prepare(
+    'SELECT id, doc, updated_at AS updatedAt, deleted_at AS deletedAt, seq FROM ideas WHERE user_id = ? AND id = ?',
+  ).bind(user.id, str(id, 120)).first();
+  if (!row) throw new HttpError(404, '找不到这条念头。', 'VAULT_IDEA_NOT_FOUND');
+  const idea = assertVaultRecordEligible(row, settings);
+  const job = await env.DB.prepare(
+    'SELECT status, github_commit_sha AS commitSha, github_path AS githubPath FROM vault_archive_jobs WHERE user_id = ? AND entity = \'idea\' AND entity_id = ? ORDER BY entity_version DESC LIMIT 1',
+  ).bind(user.id, idea.id).first();
+  return json({ idea: { ...idea, version: num(row.seq) }, archiveStatus: job?.status || 'not_archived', commitSha: job?.commitSha || null, path: job?.githubPath || null });
+}
+
+async function handleVaultCreate(request, env) {
+  const user = await authenticate(request, env);
+  await getEnabledVaultSettings(env, user.id);
+  const body = await readJson(request);
+  if (typeof body.content !== 'string' || !body.content.trim()) throw new HttpError(400, '念头正文不能为空。', 'EMPTY_CONTENT');
+  if (body.content.length > MAX_TEXT_CHARS) throw new HttpError(413, '念头正文超过当前应用限制。', 'VAULT_CONTENT_TOO_LARGE');
+  const at = nowMs();
+  const id = str(body.id, 120).trim() || 'idea_' + crypto.randomUUID();
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new HttpError(422, '念头编号不符合规范。', 'VAULT_BAD_ID');
+  const existing = await selectRecord(env, 'ideas', user.id, id);
+  if (existing) throw new HttpError(409, '这个念头编号已经存在。', 'VAULT_DUPLICATE_ID');
+  const idea = normalizeIdea({ ...body, id, content: body.content, createdAt: at, updatedAt: at, deletedAt: null });
+  const seq = await allocateSeq(env, 1);
+  await env.DB.prepare(
+    'INSERT INTO ideas (user_id, id, doc, updated_at, deleted_at, seq) VALUES (?, ?, ?, ?, NULL, ?)',
+  ).bind(user.id, id, JSON.stringify(idea), at, seq).run();
+  const archive = await queueVaultIdeaIfEligible(env, user, idea, seq);
+  return json({ ok: true, idea: { ...idea, version: seq }, archiveStatus: archive?.status || 'pending' }, 201);
+}
+
+async function updateVaultIdea(request, env, id, operation) {
+  const user = await authenticate(request, env);
+  const settings = await getEnabledVaultSettings(env, user.id);
+  const body = await readJson(request);
+  const row = await env.DB.prepare(
+    'SELECT id, doc, updated_at AS updatedAt, deleted_at AS deletedAt, seq FROM ideas WHERE user_id = ? AND id = ?',
+  ).bind(user.id, str(id, 120)).first();
+  if (!row) throw new HttpError(404, '找不到这条念头。', 'VAULT_IDEA_NOT_FOUND');
+  const current = assertVaultRecordEligible(row, settings);
+  if (!Number.isInteger(Number(body.expected_version)) || Number(body.expected_version) !== num(row.seq)) {
+    throw new HttpError(409, '念头版本已变化，请重新读取后再修改。', 'VAULT_VERSION_CONFLICT');
+  }
+  if (operation === 'restore' && current.deletedAt == null && row.deletedAt == null) {
+    return json({ ok: true, idea: { ...current, version: num(row.seq) }, archiveStatus: 'archived', unchanged: true });
+  }
+  if (operation !== 'restore' && current.deletedAt != null) {
+    throw new HttpError(409, '这条念头已归档删除，请先恢复再修改。', 'VAULT_RECORD_DELETED');
+  }
+  const at = nowMs();
+  let next;
+  if (operation === 'delete') {
+    next = normalizeIdea({ ...current, deletedAt: at, updatedAt: at });
+  } else if (operation === 'restore') {
+    next = normalizeIdea({ ...current, deletedAt: null, updatedAt: at });
+  } else {
+    const patch = body.patch;
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, '请提供 patch 对象。', 'VAULT_BAD_PATCH');
+    const allowed = ['title','content','category','categorySource','status','tags','pinned','notes','problem','targetUsers','productForm','projectUrl','projectId'];
+    const safePatch = {};
+    for (const key of allowed) if (Object.prototype.hasOwnProperty.call(patch, key)) safePatch[key] = patch[key];
+    if (safePatch.content !== undefined && (typeof safePatch.content !== 'string' || !safePatch.content.trim() || safePatch.content.length > MAX_TEXT_CHARS)) {
+      throw new HttpError(422, '念头正文不能为空或超过当前应用限制。', 'VAULT_BAD_CONTENT');
+    }
+    next = normalizeIdea({ ...current, ...safePatch, id: current.id, createdAt: current.createdAt, updatedAt: at, deletedAt: current.deletedAt });
+  }
+  const seq = await allocateSeq(env, 1);
+  await env.DB.prepare(
+    'UPDATE ideas SET doc = ?, updated_at = ?, deleted_at = ?, seq = ? WHERE user_id = ? AND id = ?',
+  ).bind(JSON.stringify(next), at, next.deletedAt, seq, user.id, id).run();
+  const archive = await queueVaultIdeaIfEligible(env, user, next, seq);
+  return json({ ok: true, idea: { ...next, version: seq }, archiveStatus: archive?.status || 'pending' });
+}
+
+async function handleVaultUpdate(request, env, id) {
+  return updateVaultIdea(request, env, id, 'update');
+}
+async function handleVaultDelete(request, env, id) {
+  return updateVaultIdea(request, env, id, 'delete');
+}
+async function handleVaultRestore(request, env, id) {
+  return updateVaultIdea(request, env, id, 'restore');
+}
+
