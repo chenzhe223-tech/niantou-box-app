@@ -203,7 +203,7 @@ export function buildPlatformPrompts(
   projectName: string,
   branch = 'main',
 ): Record<GitHubPlatform, string> {
-  const branchPath = branch.split('/').map(encodeURIComponent).join('/');
+  const branchPath = encodeURIComponent(branch);
   const filePath = path.split('/').map(encodeURIComponent).join('/');
   const target = `${repositoryUrl}/blob/${branchPath}/${filePath}`;
   const shared = `请先读取 GitHub 念头库中的项目说明文件：${target}\n\n以文件中记载的原始念头、问题、目标用户、功能范围和产品形态为准，不要臆造用户没有提供的需求。先检查当前代码与运行状态，再制定最小可验证实现；保留现有可用能力，完成后运行测试、构建和必要的线上验收。若你当前没有该 GitHub 仓库的读取权限，请明确提示我连接仓库或提供文件，不要假装已经读过。`;
