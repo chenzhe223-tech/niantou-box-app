@@ -3066,7 +3066,10 @@ async function queueVaultIdeaIfEligible(env, user, idea, seq) {
     const body = await response.json();
     return { status: body.archiveStatus || 'pending' };
   } catch {
-    return { status: 'pending' };
+    const latest = await env.DB.prepare(
+      'SELECT status FROM vault_archive_jobs WHERE user_id = ? AND operation_id = ?',
+    ).bind(user.id, operationId).first();
+    return { status: latest?.status || 'pending' };
   }
 }
 
