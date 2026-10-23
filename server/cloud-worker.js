@@ -1219,6 +1219,7 @@ async function handlePush(request, env) {
 
   const results = [];
   const writes = [];
+  const archiveCandidates = [];
 
   /*
    * 先算清楚这次要占多少个序号。
@@ -1345,11 +1346,28 @@ async function handlePush(request, env) {
         rowSeq,
       ),
     );
+    if (entity === 'idea' && op === 'upsert' && doc.deletedAt == null) {
+      archiveCandidates.push({ idea: doc, seq: rowSeq, id });
+    }
     results.push({ entity, id, status: 'applied', seq: rowSeq });
   }
 
   if (writes.length > 0) {
     await env.DB.batch(writes);
+  }
+
+  // Archive only newly-created ideas after explicit enablement. Historical ideas are never backfilled.
+  for (const candidate of archiveCandidates) {
+    try {
+      const archive = await queueVaultIdeaIfEligible(env, user, candidate.idea, candidate.seq);
+      if (archive) {
+        const result = results.find((item) => item.entity === 'idea' && item.id === candidate.id);
+        if (result) result.archiveStatus = archive.status;
+      }
+    } catch {
+      const result = results.find((item) => item.entity === 'idea' && item.id === candidate.id);
+      if (result) result.archiveStatus = 'pending';
+    }
   }
 
   const cursor = await currentSeq(env);
@@ -1432,7 +1450,14 @@ async function handleCapture(request, env) {
     });
   }
 
-  return json({ ok: true, idea: { ...idea, seq, serverUpdatedAt: idea.updatedAt }, cursor: seq, source: str(body.source, 40) || 'website' });
+  let archiveStatus = null;
+  try {
+    const archive = await queueVaultIdeaIfEligible(env, user, idea, seq);
+    if (archive) archiveStatus = archive.status;
+  } catch {
+    archiveStatus = 'pending';
+  }
+  return json({ ok: true, idea: { ...idea, seq, serverUpdatedAt: idea.updatedAt }, cursor: seq, source: str(body.source, 40) || 'website', ...(archiveStatus ? { archiveStatus } : {}) });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2774,7 +2799,6 @@ function canonicalVaultThought(idea, user, operationId, version) {
     source: { app: 'nianbox', record_id: String(idea.id) },
     version,
     operation_id: operationId,
-    owner_id: String(user.id),
   };
 }
 
@@ -2806,9 +2830,16 @@ async function handleVaultEnable(request, env) {
     throw new HttpError(400, '必须明确确认不迁移历史念头。', 'VAULT_NO_BACKFILL_CONFIRMATION_REQUIRED');
   }
   const repo = vaultRepository(env);
-  if (!repo || !String(env.NIANVAULT_GITHUB_TOKEN || '').trim()) {
+  const token = String(env.NIANVAULT_GITHUB_TOKEN || '').trim();
+  if (!repo || !token) {
     throw new HttpError(503, 'NianVault 尚未配置私有仓库与服务端凭证。', 'VAULT_NOT_CONFIGURED');
   }
+  const repoCheck = await fetch('https://api.github.com/repos/' + repo, {
+    headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'NianVault-Archive-Service' },
+  });
+  if (!repoCheck.ok) throw new HttpError(503, '无法验证 NianVault 仓库，请检查仓库名与凭证权限。', 'VAULT_REPOSITORY_UNVERIFIED');
+  const repoMeta = await repoCheck.json();
+  if (repoMeta.private !== true) throw new HttpError(409, 'NianVault 必须使用私有 GitHub 仓库。', 'VAULT_REPOSITORY_NOT_PRIVATE');
   const existing = await env.DB.prepare('SELECT user_id FROM vault_settings WHERE user_id = ?').bind(user.id).first();
   if (existing) {
     return json({ ok: true, enabled: true, alreadyEnabled: true, message: 'NianVault 已启用；历史数据不会补归档。' });
@@ -2978,3 +3009,30 @@ async function handleVaultRetry(request, env) {
   return await processVaultArchiveJob(env, user, operationId);
 }
 
+
+async function queueVaultIdeaIfEligible(env, user, idea, seq) {
+  const settings = await env.DB.prepare(
+    'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq FROM vault_settings WHERE user_id = ?',
+  ).bind(user.id).first();
+  if (!settings) return null;
+  if (num(idea.createdAt) < num(settings.enabledAt) || num(seq) <= num(settings.activationSeq)) return null;
+  if (idea.deletedAt != null) return null;
+  const operationId = 'new-idea:' + String(idea.id);
+  const version = Math.max(1, num(idea.updatedAt));
+  const payload = canonicalVaultThought(idea, user, operationId, version);
+  const payloadJson = JSON.stringify(payload, null, 2) + '\n';
+  const payloadHash = await sha256Hex(payloadJson);
+  const at = nowMs();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO vault_archive_jobs
+      (user_id, operation_id, entity, entity_id, entity_version, operation, payload_json, payload_sha256, status, attempts, next_attempt_at, created_at, updated_at)
+     VALUES (?, ?, 'idea', ?, ?, 'upsert', ?, ?, 'pending', 0, ?, ?, ?)`,
+  ).bind(user.id, operationId, String(idea.id), version, payloadJson, payloadHash, at, at, at).run();
+  try {
+    const response = await processVaultArchiveJob(env, user, operationId);
+    const body = await response.json();
+    return { status: body.archiveStatus || 'pending' };
+  } catch {
+    return { status: 'pending' };
+  }
+}
