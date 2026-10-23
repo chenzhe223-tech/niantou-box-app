@@ -285,7 +285,7 @@ function corsHeaders() {
     // 鉴权走 Authorization 头而不是 Cookie，因此开启通配来源不会带来 CSRF 风险。
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-allow-headers': 'content-type, authorization, idempotency-key, if-match',
     'access-control-max-age': '86400',
     'cache-control': 'no-store',
     vary: 'origin',
@@ -3200,7 +3200,10 @@ async function updateVaultIdea(request, env, id, operation) {
     throw new HttpError(409, '念头版本已变化，请重新读取后再修改。', 'VAULT_VERSION_CONFLICT');
   }
   if (operation === 'restore' && current.deletedAt == null && row.deletedAt == null) {
-    return json({ ok: true, idea: { ...current, version: num(row.seq) }, archiveStatus: 'archived', unchanged: true });
+    const priorJob = await env.DB.prepare(
+      "SELECT status FROM vault_archive_jobs WHERE user_id = ? AND entity = 'idea' AND entity_id = ? ORDER BY entity_version DESC LIMIT 1",
+    ).bind(user.id, current.id).first();
+    return json({ ok: true, idea: { ...current, version: num(row.seq) }, archiveStatus: priorJob?.status || 'not_archived', unchanged: true });
   }
   if (operation !== 'restore' && current.deletedAt != null) {
     throw new HttpError(409, '这条念头已归档删除，请先恢复再修改。', 'VAULT_RECORD_DELETED');
