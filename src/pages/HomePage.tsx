@@ -62,7 +62,7 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
   const now = useNow();
   const sync = useCloudSync();
   // 首页只展示最近几件作品：只把这几件作品的图片读进内存，旧图片不参与。
-  const works = useWorks({ imageLimit: 4 });
+  const works = useWorks({ imageLimit: 8 });
 
   const [category, setCategory] = useState<CategoryChoice>('none');
   const [error, setError] = useState<string | null>(null);
@@ -113,8 +113,26 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
       ? '还没有登录云端账号'
       : '';
 
-  /** 首页只展示最近三件作品，其余的走「查看全部」。 */
-  const recentWorks = useMemo(() => works.works.slice(0, 3), [works.works]);
+  /** 首页把最近作品做成横向「专辑架」，最多读取 8 张封面，避免一次载入整库图片。 */
+  const recentWorks = useMemo(() => works.works.slice(0, 8), [works.works]);
+  const [workCategoryFilter, setWorkCategoryFilter] = useState<'all' | 'uncategorized' | IdeaCategory>('all');
+  const ideaById = useMemo(() => new Map(ideas.map((item) => [item.id, item])), [ideas]);
+  const workCategoryChoices = useMemo(() => {
+    const present = new Set(recentWorks.map((work) => ideaById.get(work.ideaId)?.category ?? 'uncategorized'));
+    return [
+      { value: 'all' as const, label: '全部作品' },
+      ...IDEA_CATEGORIES.filter((item) => present.has(item.value)).map((item) => ({ value: item.value, label: item.label })),
+      ...(present.has('uncategorized') ? [{ value: 'uncategorized' as const, label: '待分类' }] : []),
+    ];
+  }, [recentWorks, ideaById]);
+  const visibleRecentWorks = useMemo(
+    () => recentWorks.filter((work) => {
+      if (workCategoryFilter === 'all') return true;
+      const category = ideaById.get(work.ideaId)?.category ?? 'uncategorized';
+      return category === workCategoryFilter;
+    }),
+    [recentWorks, workCategoryFilter, ideaById],
+  );
 
   /**
    * 把输入框里的内容真正写进数据库。
@@ -465,62 +483,82 @@ export function HomePage({ navigate }: { navigate: (hash: string) => void }) {
         {recentWorks.length === 0 ? (
           <EmptyState
             icon="image"
-            title="还没有保存过作品。"
-            description="随手记下一个念头，就能在这台设备上把它排成一张卡片，不用登录，也不会消耗任何模型额度。"
+            title="还没有作品，等你的第一个灵感上墙。"
+            description="生成的图片会自动归集到这里，并按关联念头的类别整理；不必再手动保存进作品库。"
             action={
               <Button variant="secondary" icon="image" onClick={() => navigate(paths.posterTool)}>
-                去做第一张卡片
+                去生成第一张作品
               </Button>
             }
           />
         ) : (
           <>
-            <ul className="nb-gallery nb-gallery--compact">
-              {recentWorks.map((work) => (
-                <li key={work.id} className="nb-gallery__item">
-                  <button
-                    type="button"
-                    className="nb-gallery__thumb"
-                    aria-label="打开我的作品"
-                    onClick={() => navigate(paths.works)}
-                  >
-                    {works.images.get(work.id) ? (
-                      <img className="nb-gallery__image" src={works.images.get(work.id)} alt="" />
-                    ) : (
-                      <span className="nb-gallery__missing">图片数据缺失</span>
-                    )}
-                  </button>
-                  <div className="nb-gallery__meta">
-                    <p className="nb-gallery__title">{work.title || '（无标题）'}</p>
-                    <p className="nb-gallery__sub">
-                      {workRenderLabel(work)} · {formatRelative(work.createdAt, now)}
-                    </p>
-                    <div className="nb-gallery__actions">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => navigate(paths.poster(work.ideaId))}
-                      >
-                        继续创作
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => void handleShareWork(work)}>
-                        分享
-                      </Button>
-                    </div>
-                  </div>
-                </li>
+            <div className="nb-work-filters" role="group" aria-label="按念头类别筛选作品">
+              {workCategoryChoices.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  className={workCategoryFilter === choice.value ? 'nb-chip nb-chip--active' : 'nb-chip'}
+                  aria-pressed={workCategoryFilter === choice.value}
+                  onClick={() => setWorkCategoryFilter(choice.value)}
+                >
+                  {choice.label}
+                </button>
               ))}
-            </ul>
+              <span className="nb-kv">{visibleRecentWorks.length} 件 · 左右滑动浏览</span>
+            </div>
+            {visibleRecentWorks.length === 0 ? (
+              <div className="nb-work-empty">这个分类还没有作品，生成图片后会自动归集到这里。</div>
+            ) : (
+              <ul className="nb-gallery nb-gallery--compact nb-gallery--reel">
+                {visibleRecentWorks.map((work) => {
+                  const linkedIdea = ideaById.get(work.ideaId);
+                  const categoryName = linkedIdea?.category
+                    ? IDEA_CATEGORIES.find((item) => item.value === linkedIdea.category)?.label ?? '其他'
+                    : '待分类';
+                  return (
+                    <li key={work.id} className="nb-gallery__item">
+                      <button
+                        type="button"
+                        className="nb-gallery__thumb"
+                        aria-label={`打开作品：${work.title || '念头卡片'}`}
+                        onClick={() => navigate(paths.works)}
+                      >
+                        {works.images.get(work.id) ? (
+                          <img className="nb-gallery__image" src={works.images.get(work.id)} alt="" />
+                        ) : (
+                          <span className="nb-gallery__missing">图片正在读取…</span>
+                        )}
+                        <span className="nb-gallery__cover-tag">{categoryName}</span>
+                      </button>
+                      <div className="nb-gallery__meta">
+                        <p className="nb-gallery__title">{work.title || '（无标题）'}</p>
+                        <p className="nb-gallery__sub">
+                          {workRenderLabel(work)} · {formatRelative(work.createdAt, now)}
+                        </p>
+                        <div className="nb-gallery__actions">
+                          <Button size="sm" variant="ghost" onClick={() => navigate(paths.poster(work.ideaId))}>
+                            继续创作
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => void handleShareWork(work)}>
+                            分享
+                          </Button>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
             <p className="nb-kv">
-              作品只保存在这台设备上，不会自动上传，也不会自动公开。想找以前的图，可以进
+              图片会自动保存到本机作品库；归类依据关联念头的分类，之后修改念头分类，这里的作品分类也会同步变化。
               <button
                 type="button"
                 className="nb-link nb-link--button"
                 onClick={() => navigate(paths.works)}
               >
-                我的作品
+                查看全部作品
               </button>
-              。
             </p>
           </>
         )}
