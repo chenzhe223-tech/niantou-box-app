@@ -2788,6 +2788,15 @@ async function handleMail(request, env) {
 /* NianVault: private GitHub archival (new ideas only; explicit opt-in)         */
 /* -------------------------------------------------------------------------- */
 
+export function assertVaultOwner(user, env) {
+  const ownerId = String(env.NIANVAULT_OWNER_USER_ID || '').trim();
+  if (!ownerId) throw new HttpError(503, 'NianVault 尚未配置唯一所有者账号。', 'VAULT_OWNER_NOT_CONFIGURED');
+  if (!user || String(user.id || '') !== ownerId) {
+    throw new HttpError(403, '此 NianVault 仅授权给所有者账号使用。', 'VAULT_OWNER_ONLY');
+  }
+  return true;
+}
+
 export function vaultRepository(env) {
   const raw = String(env.NIANVAULT_REPO || '').trim();
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) return '';
@@ -2829,6 +2838,7 @@ export function canonicalVaultThought(idea, user, operationId, version) {
 
 async function handleVaultStatus(request, env) {
   const user = await authenticate(request, env);
+  assertVaultOwner(user, env);
   const settings = await env.DB.prepare(
     'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq, repository FROM vault_settings WHERE user_id = ?',
   ).bind(user.id).first();
@@ -2850,6 +2860,7 @@ async function handleVaultStatus(request, env) {
 
 async function handleVaultEnable(request, env) {
   const user = await authenticate(request, env);
+  assertVaultOwner(user, env);
   const body = await readJson(request);
   if (body.confirm_no_backfill !== true) {
     throw new HttpError(400, '必须明确确认不迁移历史念头。', 'VAULT_NO_BACKFILL_CONFIRMATION_REQUIRED');
@@ -2885,6 +2896,7 @@ async function handleVaultEnable(request, env) {
 
 async function handleVaultArchive(request, env) {
   const user = await authenticate(request, env);
+  assertVaultOwner(user, env);
   const body = await readJson(request);
   const id = str(body.id, 120).trim();
   if (!id) throw new HttpError(400, '缺少念头编号。', 'VAULT_MISSING_ID');
@@ -3029,6 +3041,7 @@ async function markVaultArchived(env, userId, job, path, blobSha, commitSha, at)
 
 async function handleVaultRetry(request, env) {
   const user = await authenticate(request, env);
+  assertVaultOwner(user, env);
   const body = await readJson(request);
   const operationId = str(body.operation_id, 180).trim();
   if (!operationId) throw new HttpError(400, '缺少归档任务编号。', 'VAULT_MISSING_OPERATION_ID');
@@ -3100,7 +3113,9 @@ async function processDueVaultJobs(env) {
 }
 
 
-async function getEnabledVaultSettings(env, userId) {
+async function getEnabledVaultSettings(env, user) {
+  assertVaultOwner(user, env);
+  const userId = user.id;
   const settings = await env.DB.prepare(
     'SELECT enabled_at AS enabledAt, activation_seq AS activationSeq, repository FROM vault_settings WHERE user_id = ?',
   ).bind(userId).first();
@@ -3118,7 +3133,7 @@ function assertVaultRecordEligible(row, settings) {
 
 async function handleVaultList(request, url, env) {
   const user = await authenticate(request, env);
-  const settings = await getEnabledVaultSettings(env, user.id);
+  const settings = await getEnabledVaultSettings(env, user);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100);
   const beforeSeq = Math.max(0, Number(url.searchParams.get('before_seq')) || Number.MAX_SAFE_INTEGER);
   const includeDeleted = url.searchParams.get('include_deleted') === 'true';
@@ -3154,7 +3169,7 @@ async function handleVaultList(request, url, env) {
 
 async function handleVaultGet(request, env, id) {
   const user = await authenticate(request, env);
-  const settings = await getEnabledVaultSettings(env, user.id);
+  const settings = await getEnabledVaultSettings(env, user);
   const row = await env.DB.prepare(
     'SELECT id, doc, updated_at AS updatedAt, deleted_at AS deletedAt, seq FROM ideas WHERE user_id = ? AND id = ?',
   ).bind(user.id, str(id, 120)).first();
@@ -3168,7 +3183,7 @@ async function handleVaultGet(request, env, id) {
 
 async function handleVaultCreate(request, env) {
   const user = await authenticate(request, env);
-  await getEnabledVaultSettings(env, user.id);
+  await getEnabledVaultSettings(env, user);
   const body = await readJson(request);
   if (typeof body.content !== 'string' || !body.content.trim()) throw new HttpError(400, '念头正文不能为空。', 'EMPTY_CONTENT');
   if (body.content.length > MAX_TEXT_CHARS) throw new HttpError(413, '念头正文超过当前应用限制。', 'VAULT_CONTENT_TOO_LARGE');
@@ -3196,7 +3211,7 @@ async function handleVaultCreate(request, env) {
 
 async function updateVaultIdea(request, env, id, operation) {
   const user = await authenticate(request, env);
-  const settings = await getEnabledVaultSettings(env, user.id);
+  const settings = await getEnabledVaultSettings(env, user);
   const body = await readJson(request);
   const row = await env.DB.prepare(
     'SELECT id, doc, updated_at AS updatedAt, deleted_at AS deletedAt, seq FROM ideas WHERE user_id = ? AND id = ?',
