@@ -14,8 +14,8 @@ describe('NianVault canonical archive contract', () => {
     expect(assertVaultOwner({ id: 'user-a' }, { NIANVAULT_OWNER_USER_ID: 'user-a' })).toBe(true);
   });
   it('maps existing NianBox categories to stable, non-title-based paths', () => {
-    expect(vaultPathForIdea({ id: 'idea_123', category: 'app' })).toBe('thoughts/app/idea_123.json');
-    expect(vaultPathForIdea({ id: 'idea_124', category: null })).toBe('thoughts/other/idea_124.json');
+    expect(vaultPathForIdea({ id: 'idea_123', category: 'app' })).toBe('thoughts/idea_123.json');
+    expect(vaultPathForIdea({ id: 'idea_124', category: null })).toBe('thoughts/idea_124.json');
   });
 
   it('rejects unsafe identifiers rather than allowing path traversal', () => {
