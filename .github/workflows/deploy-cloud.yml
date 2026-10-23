@@ -76,6 +76,7 @@ jobs:
           NIANVAULT_GITHUB_TOKEN: ${{ secrets.NIANVAULT_GITHUB_TOKEN }}
           PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || 'https://chenzhe223-tech.github.io/niantou-box-app/' }}
           NIANVAULT_REPO: ${{ vars.NIANVAULT_REPO }}
+          NIANVAULT_OWNER_USER_ID: ${{ vars.NIANVAULT_OWNER_USER_ID }}
         run: node server/deploy-cloud.mjs --emit-result=cloud-result.json
 
       - name: 上传部署结果
