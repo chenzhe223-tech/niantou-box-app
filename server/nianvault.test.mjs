@@ -37,7 +37,7 @@ describe('NianVault canonical archive contract', () => {
       updatedAt: 1792720800001,
       deletedAt: null,
     };
-    const result = canonicalVaultThought(idea, { id: 'user-secret-id' }, 'new-idea:idea_abc123', 1792720800001);
+    const result = canonicalVaultThought(idea, { id: 'user-secret-id' }, 'idea:idea_abc123:v1792720800001', 1792720800001);
 
     expect(result.schema_version).toBe(1);
     expect(result.id).toBe(idea.id);
