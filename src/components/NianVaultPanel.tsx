@@ -101,6 +101,11 @@ export function NianVaultPanel() {
             <p className="nb-kv">
               仓库：<strong>{status.repository || '尚未配置'}</strong>
             </p>
+            {!status.repositoryConfigured || !status.githubCredentialConfigured ? (
+              <p className="nb-notice nb-notice--danger" role="status">
+                私有仓库或服务端凭证尚未配置，暂时不能启用归档。
+              </p>
+            ) : null}
             {status.enabled ? (
               <>
                 <p className="nb-kv">
@@ -124,7 +129,7 @@ export function NianVaultPanel() {
 
         <div className="nb-actionbar">
           {status && !status.enabled ? (
-            <Button variant="primary" icon="archive" disabled={busy || loading} onClick={() => void enable()}>
+            <Button variant="primary" icon="archive" disabled={busy || loading || !status.repositoryConfigured || !status.githubCredentialConfigured} onClick={() => void enable()}>
               {busy ? '正在启用…' : '启用 NianVault'}
             </Button>
           ) : null}
