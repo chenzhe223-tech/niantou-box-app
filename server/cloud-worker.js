@@ -2853,6 +2853,9 @@ async function handleVaultStatus(request, env) {
   ).bind(user.id).all();
   const byStatus = {};
   for (const row of counts.results || []) byStatus[row.status] = num(row.count);
+  const recent = await env.DB.prepare(
+    'SELECT operation_id AS operationId, entity_id AS entityId, status, last_error_code AS errorCode, updated_at AS updatedAt FROM vault_archive_jobs WHERE user_id = ? ORDER BY updated_at DESC LIMIT 10',
+  ).bind(user.id).all();
   return json({
     enabled: Boolean(settings),
     enabledAt: settings ? num(settings.enabledAt) : null,
@@ -2861,6 +2864,13 @@ async function handleVaultStatus(request, env) {
     githubCredentialConfigured: Boolean(String(env.NIANVAULT_GITHUB_TOKEN || '').trim()),
     repository: settings?.repository || vaultRepository(env) || null,
     jobs: byStatus,
+    recentJobs: (recent.results || []).map((row) => ({
+      operationId: String(row.operationId || ''),
+      entityId: String(row.entityId || ''),
+      status: String(row.status || 'pending'),
+      errorCode: String(row.errorCode || ''),
+      updatedAt: num(row.updatedAt),
+    })),
   });
 }
 
