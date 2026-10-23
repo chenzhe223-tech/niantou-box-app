@@ -2763,20 +2763,20 @@ async function handleMail(request, env) {
 /* NianVault: private GitHub archival (new ideas only; explicit opt-in)         */
 /* -------------------------------------------------------------------------- */
 
-function vaultRepository(env) {
+export function vaultRepository(env) {
   const raw = String(env.NIANVAULT_REPO || '').trim();
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) return '';
   return raw;
 }
 
-function vaultPathForIdea(idea) {
+export function vaultPathForIdea(idea) {
   const category = ({ life: 'life', app: 'app', skill: 'skill', web: 'web', other: 'other' })[idea.category] || 'other';
   const id = String(idea.id || '');
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new HttpError(422, '念头编号不符合归档规范。', 'VAULT_BAD_ID');
   return `thoughts/${category}/${id}.json`;
 }
 
-function canonicalVaultThought(idea, user, operationId, version) {
+export function canonicalVaultThought(idea, user, operationId, version) {
   return {
     schema_version: 1,
     id: String(idea.id),
