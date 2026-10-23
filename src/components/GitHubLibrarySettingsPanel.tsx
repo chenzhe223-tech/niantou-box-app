@@ -100,7 +100,7 @@ export function GitHubLibrarySettingsPanel() {
         </p>
         {error ? <p className="nb-notice nb-notice--danger" role="alert">{error}</p> : null}
         <div className="nb-actionbar">
-          <Button variant="primary" icon="github" disabled={busy || !repositoryUrl.trim() || !token.trim()} onClick={() => void handleConnect()}>
+          <Button variant="primary" icon="external" disabled={busy || !repositoryUrl.trim() || !token.trim()} onClick={() => void handleConnect()}>
             {busy ? '正在验证仓库…' : '一键关联并验证'}
           </Button>
           {settings ? <Button variant="ghost" onClick={handleDisconnect}>解除关联</Button> : null}
