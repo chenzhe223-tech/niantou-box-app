@@ -1,6 +1,6 @@
 # NianVault — integration plan
 
-NianVault is the personal, multi-device archive for newly created or changed ideas. This directory documents the first integration slice inside NianBox; it is not the standalone NianVault repository.
+NianVault is the personal, multi-device archive for new thoughts created after activation; subsequent edits and soft-deletes of those new thoughts are also synced. This directory documents the first integration slice inside NianBox; it is not the standalone NianVault repository.
 
 ## Verified baseline
 
@@ -14,7 +14,7 @@ NianVault is the personal, multi-device archive for newly created or changed ide
 
 1. Personal-owned data only. All client platforms act as authorized clients of the same account.
 2. Authorized clients may read, create, update, soft-delete/archive, and restore records.
-3. No historical backfill. Only changes after an explicit enablement cursor are eligible for NianVault.
+3. No historical backfill. Only thoughts created after an explicit enablement cursor are eligible. Edits and soft-deletes of those eligible thoughts are synced; pre-existing thoughts remain out of scope.
 4. NianBox local IndexedDB and existing D1 sync remain operational if GitHub is unavailable.
 5. D1 queue status is not proof of GitHub archival. Only a verified GitHub commit can set `archived`.
 6. GitHub credentials must exist only in Worker secrets. Never expose them to the browser or Vite build.
