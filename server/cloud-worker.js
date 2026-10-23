@@ -1346,7 +1346,7 @@ async function handlePush(request, env) {
         rowSeq,
       ),
     );
-    if (entity === 'idea' && op === 'upsert' && doc.deletedAt == null) {
+    if (entity === 'idea' && op === 'upsert') {
       archiveCandidates.push({ idea: doc, seq: rowSeq, id });
     }
     results.push({ entity, id, status: 'applied', seq: rowSeq });
@@ -2876,11 +2876,8 @@ async function handleVaultArchive(request, env) {
   if (num(idea.createdAt) < num(settings.enabledAt) || num(row.seq) <= num(settings.activationSeq)) {
     throw new HttpError(409, '这条念头属于启用前的历史数据，不会迁移到 NianVault。', 'VAULT_HISTORICAL_RECORD_BLOCKED');
   }
-  if (idea.deletedAt != null || row.deletedAt != null) {
-    throw new HttpError(409, '已删除的念头不能通过新增归档入口重新归档。', 'VAULT_DELETED_RECORD');
-  }
-  const operationId = 'new-idea:' + id;
-  const version = Math.max(1, num(idea.updatedAt, num(row.updatedAt)));
+  const version = Math.max(1, num(row.seq));
+  const operationId = 'idea:' + id + ':v' + version;
   const payload = canonicalVaultThought(idea, user, operationId, version);
   const payloadJson = JSON.stringify(payload, null, 2) + '\n';
   const payloadHash = await sha256Hex(payloadJson);
@@ -2889,8 +2886,8 @@ async function handleVaultArchive(request, env) {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO vault_archive_jobs
       (user_id, operation_id, entity, entity_id, entity_version, operation, payload_json, payload_sha256, status, attempts, next_attempt_at, created_at, updated_at)
-     VALUES (?, ?, 'idea', ?, ?, 'upsert', ?, ?, 'pending', 0, ?, ?, ?)`,
-  ).bind(user.id, operationId, id, version, payloadJson, payloadHash, at, at, at).run();
+     VALUES (?, ?, 'idea', ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+  ).bind(user.id, operationId, id, version, idea.deletedAt != null || row.deletedAt != null ? 'soft_delete' : 'upsert', payloadJson, payloadHash, at, at, at).run();
   const job = await env.DB.prepare(
     'SELECT status, github_commit_sha AS commitSha, github_path AS githubPath, last_error_code AS errorCode FROM vault_archive_jobs WHERE user_id = ? AND operation_id = ?',
   ).bind(user.id, operationId).first();
@@ -2935,6 +2932,14 @@ async function processVaultArchiveJob(env, user, operationId) {
       if (current.content) {
         try {
           const decoded = new TextDecoder().decode(Uint8Array.from(atob(String(current.content).replace(/\s/g, '')), c => c.charCodeAt(0))).trim();
+          const currentDoc = JSON.parse(decoded);
+          const currentVersion = num(currentDoc.version);
+          if (currentVersion > num(job.entity_version) || (currentVersion === num(job.entity_version) && decoded !== bodyText)) {
+            await env.DB.prepare(
+              "UPDATE vault_archive_jobs SET status = 'conflict', last_error_code = 'stale_archive_version', updated_at = ? WHERE user_id = ? AND operation_id = ?",
+            ).bind(at, user.id, operationId).run();
+            throw new HttpError(409, '仓库中的念头版本更新，已阻止旧版本覆盖。', 'VAULT_STALE_VERSION');
+          }
           if (decoded === bodyText) {
             await markVaultArchived(env, user.id, job, path, currentSha, String(current.commit?.sha || ''), at);
             return json({ ok: true, thoughtId: job.entity_id, archiveStatus: 'archived', commitSha: String(current.commit?.sha || ''), path, duplicate: true });
@@ -3016,9 +3021,8 @@ async function queueVaultIdeaIfEligible(env, user, idea, seq) {
   ).bind(user.id).first();
   if (!settings) return null;
   if (num(idea.createdAt) < num(settings.enabledAt) || num(seq) <= num(settings.activationSeq)) return null;
-  if (idea.deletedAt != null) return null;
-  const operationId = 'new-idea:' + String(idea.id);
-  const version = Math.max(1, num(idea.updatedAt));
+  const version = Math.max(1, num(seq));
+  const operationId = 'idea:' + String(idea.id) + ':v' + version;
   const payload = canonicalVaultThought(idea, user, operationId, version);
   const payloadJson = JSON.stringify(payload, null, 2) + '\n';
   const payloadHash = await sha256Hex(payloadJson);
@@ -3026,8 +3030,8 @@ async function queueVaultIdeaIfEligible(env, user, idea, seq) {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO vault_archive_jobs
       (user_id, operation_id, entity, entity_id, entity_version, operation, payload_json, payload_sha256, status, attempts, next_attempt_at, created_at, updated_at)
-     VALUES (?, ?, 'idea', ?, ?, 'upsert', ?, ?, 'pending', 0, ?, ?, ?)`,
-  ).bind(user.id, operationId, String(idea.id), version, payloadJson, payloadHash, at, at, at).run();
+     VALUES (?, ?, 'idea', ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+  ).bind(user.id, operationId, String(idea.id), version, idea.deletedAt == null ? 'upsert' : 'soft_delete', payloadJson, payloadHash, at, at, at).run();
   try {
     const response = await processVaultArchiveJob(env, user, operationId);
     const body = await response.json();
