@@ -191,6 +191,8 @@ async function main() {
   const metadata = {
     main_module: 'cloud-worker.js',
     compatibility_date: COMPAT,
+    // Retry durable NianVault archive jobs even when no client is online.
+    triggers: { crons: ['*/5 * * * *'] },
     bindings: [
       { type: 'd1', name: 'DB', id: dbId },
       { type: 'plain_text', name: 'TZ_OFFSET_HOURS', text: TZ },
