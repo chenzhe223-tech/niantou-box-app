@@ -20,6 +20,12 @@
  *   GET  /sync/pull?since=<cursor>   增量拉取（不带 since = 全量快照）
  *   POST /sync/push                  批量提交本地变更
  *   POST /capture                    官网快速记录：直接落进个人收件箱
+ *   GET  /vault/status               NianVault 归档状态（仅唯一所有者）
+ *   POST /vault/enable               显式启用归档（严格不回填历史）
+ *   GET/POST /vault/thoughts          查询 / 创建启用后新增的念头
+ *   GET/PATCH/DELETE /vault/thoughts/:id  读取 / 修改 / 软删除念头
+ *   POST /vault/thoughts/:id/restore  恢复已软删除的念头
+ *   POST /vault/retry                 手动重试归档任务
  *   POST /ai/classify                自动分类（未配置模型时返回 configured:false）
  *   POST /ai/abstract                把念头抽象成主题 / 情绪 / 隐喻 / 视觉元素（含隐私检查）
  *   POST /ai/poster                  生成海报底图（未配置图像服务时返回 configured:false）
