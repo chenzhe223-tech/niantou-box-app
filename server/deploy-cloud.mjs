@@ -179,11 +179,11 @@ async function main() {
     await cf('POST', `/accounts/${accountId}/d1/database/${dbId}/query`, { sql });
   }
   const check = await cf('POST', `/accounts/${accountId}/d1/database/${dbId}/query`, {
-    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','ideas','projects','user_state','meta','password_reset_tokens')",
+    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','sessions','ideas','projects','user_state','meta','password_reset_tokens','vault_settings','vault_archive_jobs','vault_entity_heads','vault_audit_events')",
   });
   const tables = (check?.[0]?.results || []).map((r) => r.name).sort();
   console.log('3. 建表完成，现有表：', tables.join(', ') || '(空)');
-  for (const required of ['users', 'sessions', 'ideas', 'projects', 'password_reset_tokens']) {
+  for (const required of ['users', 'sessions', 'ideas', 'projects', 'password_reset_tokens', 'vault_settings', 'vault_archive_jobs', 'vault_entity_heads', 'vault_audit_events']) {
     if (!tables.includes(required)) throw new Error(`建表没有生效：缺少 ${required}`);
   }
 
