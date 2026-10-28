@@ -62,14 +62,17 @@ export async function importPendingLearningNotes(): Promise<{ imported: number; 
   }
 
   const existing = await listIdeas({ includeDeleted: true });
-  const existingNotes = new Set(existing.map((idea) => idea.notes));
+  const existingMarkers = new Set(existing.flatMap((idea) => {
+    const match = idea.notes.match(/\\[ai-field-notes-capture:[^\\]]+\\]/);
+    return match ? [match[0]] : [];
+  }));
   const remaining: unknown[] = [];
 
   for (const item of decoded) {
     const capture = normalize(item);
     if (!capture) { result.rejected += 1; continue; }
     const captureMarker = marker(capture.id);
-    if (existingNotes.has(captureMarker) || existing.some((idea) => idea.notes.includes(captureMarker))) {
+    if (existingMarkers.has(captureMarker)) {
       result.duplicates += 1;
       continue;
     }
@@ -85,7 +88,7 @@ export async function importPendingLearningNotes(): Promise<{ imported: number; 
     try {
       await createIdea(input);
       result.imported += 1;
-      existingNotes.add(captureMarker);
+      existingMarkers.add(captureMarker);
     } catch {
       result.failed += 1;
       remaining.push(item);
