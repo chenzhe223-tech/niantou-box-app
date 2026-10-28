@@ -63,7 +63,7 @@ export async function importPendingLearningNotes(): Promise<{ imported: number; 
 
   const existing = await listIdeas({ includeDeleted: true });
   const existingMarkers = new Set(existing.flatMap((idea) => {
-    const match = idea.notes.match(/\\[ai-field-notes-capture:[^\\]]+\\]/);
+    const match = idea.notes.match(/\[ai-field-notes-capture:[^\]]+\]/);
     return match ? [match[0]] : [];
   }));
   const remaining: unknown[] = [];
