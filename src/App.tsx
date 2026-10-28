@@ -18,6 +18,7 @@ import { useCategoryBackfill } from './hooks/useCategoryBackfill';
 import { useCloudSync } from './hooks/useCloudSync';
 import { useKeyboardInset } from './hooks/useKeyboardInset';
 import { importPendingRadarSkills } from './services/radarSkillCapture';
+import { importPendingLearningNotes } from './services/learningNoteCapture';
 import { DeveloperPage } from './pages/DeveloperPage';
 import { CloudPage } from './pages/CloudPage';
 import { FeedbackPage } from './pages/FeedbackPage';
@@ -116,6 +117,7 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
   const current = activeTab(route);
   const toast = useToast();
   const radarImportStarted = useRef(false);
+  const learningImportStarted = useRef(false);
 
   // Import explicitly saved Skills after local IndexedDB is ready.
   useEffect(() => {
@@ -143,6 +145,41 @@ function Shell({ route, navigate }: { route: Route; navigate: (hash: string) => 
         if (!active) return;
         toast.push({
           message: '简报 Skill 暂未导入，待导入内容仍会保留；请稍后刷新重试。',
+          tone: 'error',
+          duration: 0,
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [status, toast]);
+
+  // Import AI Field Notes captures after local storage is ready. Failed items remain queued for retry.
+  useEffect(() => {
+    if (status !== 'ready' || learningImportStarted.current) return;
+    learningImportStarted.current = true;
+    let active = true;
+    void importPendingLearningNotes()
+      .then((result) => {
+        if (!active) return;
+        if (result.imported > 0) {
+          toast.push({
+            message: '已从 AI 学习看板收录 ' + result.imported + ' 条知识笔记，已放入念头盒收件箱。',
+            tone: 'success',
+          });
+        }
+        if (result.failed > 0) {
+          toast.push({
+            message: result.failed + ' 条学习笔记暂未收录，内容仍留在待导入队列；稍后刷新可以重试。',
+            tone: 'error',
+            duration: 0,
+          });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        toast.push({
+          message: 'AI 学习笔记暂未导入，待导入内容仍会保留；请稍后刷新重试。',
           tone: 'error',
           duration: 0,
         });
