@@ -578,6 +578,31 @@ export function PosterPage({
                     <Button variant="secondary" icon="external" onClick={() => void handleShare()}>
                       系统分享
                     </Button>
+                    <Button
+                      variant="secondary"
+                      icon="sparkle"
+                      onClick={() => {
+                        const config = {
+                          title: '灵感海报',
+                          subtitle: '念头盒 · 灵感视觉作品',
+                          signature: 'NIANBOX',
+                          theme: 'forest',
+                          style: 'editorial',
+                          motion: 'rise',
+                          duration: 800,
+                          fontEn: 'Inter',
+                          fontZh: 'Noto Sans SC',
+                        };
+                        window.open(
+                          'https://chenzhe223-tech.github.io/motion-lab/motion-poster.html#poster=' +
+                            encodeURIComponent(JSON.stringify(config)),
+                          '_blank',
+                          'noopener,noreferrer',
+                        );
+                      }}
+                    >
+                      统一海报工坊
+                    </Button>
                   </>
                 ) : null}
               </div>
